@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace BimToPbipCli;
 
 /// <summary>
@@ -12,6 +14,9 @@ namespace BimToPbipCli;
 /// </summary>
 public sealed class ConversionService
 {
+    /// <summary>UTF-8 encoding that emits no byte-order mark.</summary>
+    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+
     private readonly IStepLogger _log;
 
     public ConversionService(IStepLogger log)
@@ -218,17 +223,26 @@ public sealed class ConversionService
             copyDirectory(modelFolder, definitionDir);
 
             var logicalId = Guid.NewGuid();
+            // Power BI Desktop rejects PBIP files that begin with a UTF-8 BOM.
+            // Utf8NoBom guarantees these files are written without one.
             File.WriteAllText(
                 Path.Combine(outputRoot, datasetName + ".pbip"),
-                PbipTemplates.PbipProjectFile());
+                PbipTemplates.PbipProjectFile(),
+                Utf8NoBom);
             File.WriteAllText(
                 Path.Combine(datasetDir, ".platform"),
-                PbipTemplates.DatasetPlatformFile(datasetName, logicalId));
+                PbipTemplates.DatasetPlatformFile(datasetName, logicalId),
+                Utf8NoBom);
             File.WriteAllText(
                 Path.Combine(datasetDir, "definition.pbism"),
-                PbipTemplates.DatasetDefinitionPropertiesFile());
+                PbipTemplates.DatasetDefinitionPropertiesFile(),
+                Utf8NoBom);
 
             _log.Info($"Dataset GUID:  {logicalId}");
+
+            // Final safety sweep: strip a UTF-8 BOM from every file in the
+            // finished project, including TMDL files written by pbi-tools.
+            stripBomFromTree(outputRoot);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -253,6 +267,32 @@ public sealed class ConversionService
         foreach (var dir in Directory.GetDirectories(sourceDir))
         {
             copyDirectory(dir, Path.Combine(destDir, Path.GetFileName(dir)));
+        }
+    }
+
+    /// <summary>
+    /// Removes a leading UTF-8 BOM (EF BB BF) from every file under <paramref name="root"/>.
+    /// PBIP files must be UTF-8 without a BOM; this guards against BOMs that may
+    /// have come from pbi-tools' TMDL output or a model.bim that already had one.
+    /// </summary>
+    private void stripBomFromTree(string root)
+    {
+        ReadOnlySpan<byte> bom = [0xEF, 0xBB, 0xBF];
+        var stripped = 0;
+
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            var bytes = File.ReadAllBytes(file);
+            if (bytes.Length >= 3 && bytes.AsSpan(0, 3).SequenceEqual(bom))
+            {
+                File.WriteAllBytes(file, bytes[3..]);
+                stripped++;
+            }
+        }
+
+        if (stripped > 0)
+        {
+            _log.Info($"Stripped a UTF-8 BOM from {stripped} file(s).");
         }
     }
 

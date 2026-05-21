@@ -154,6 +154,15 @@ on other platforms type the paths manually.
 > discussed upstream (see the "Can we expect Support for PBIP" issue), so this
 > utility composes the PBIP layout manually around `pbi-tools convert`.
 
+> **Encoding.** Power BI Desktop rejects any PBIP file that starts with a UTF-8
+> byte-order mark (BOM): *"Only text with UTF8 encoding without BOM ... is
+> supported."* Both implementations write every file as **UTF-8 without a BOM**
+> and then sweep the finished project to strip a BOM from any other file
+> (including TMDL emitted by `pbi-tools`). This matters most for the PowerShell
+> version: Windows PowerShell 5.1's `Set-Content -Encoding UTF8` would add a
+> BOM, so the script uses `[System.IO.File]::WriteAllText` with
+> `UTF8Encoding($false)` instead.
+
 ---
 
 ## Requirements

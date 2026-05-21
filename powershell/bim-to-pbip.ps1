@@ -87,6 +87,43 @@ $script:ConsoleLog = {
 }
 
 # ===========================================================================
+#  UTF-8 (no BOM) file helpers
+#
+#  Power BI Desktop rejects PBIP files that start with a UTF-8 byte-order mark
+#  ("Only text with UTF8 encoding without BOM ... is supported"). Windows
+#  PowerShell 5.1's `Set-Content -Encoding UTF8` writes UTF-8 *with* a BOM, and
+#  `-Encoding UTF8NoBOM` only exists in PowerShell 7+. So every file this tool
+#  writes goes through Write-Utf8NoBom, and the finished project is swept once
+#  more with Remove-Utf8Bom to strip a BOM from anything else (e.g. TMDL files
+#  emitted by pbi-tools, or a model.bim that already contained a BOM).
+# ===========================================================================
+
+function Write-Utf8NoBom {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Content
+    )
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
+}
+
+function Remove-Utf8Bom {
+    # Strips a leading UTF-8 BOM (EF BB BF) from a file in place.
+    # Returns $true if a BOM was found and removed, otherwise $false.
+    param([Parameter(Mandatory)][string]$Path)
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -ge 3 -and
+        $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        $rest = New-Object 'byte[]' ($bytes.Length - 3)
+        [Array]::Copy($bytes, 3, $rest, 0, $rest.Length)
+        [System.IO.File]::WriteAllBytes($Path, $rest)
+        return $true
+    }
+    return $false
+}
+
+# ===========================================================================
 #  pbi-tools resolution
 # ===========================================================================
 
@@ -299,13 +336,25 @@ function Invoke-BimToPbip {
         Copy-Item -LiteralPath $modelFolder -Destination $definitionDir -Recurse
 
         $logicalId = [Guid]::NewGuid()
-        Set-Content -LiteralPath (Join-Path $root "$dsName.pbip") `
-            -Value (Get-PbipProjectJson) -Encoding UTF8
-        Set-Content -LiteralPath (Join-Path $datasetDir '.platform') `
-            -Value (Get-DatasetPlatformJson -Name $dsName -LogicalId $logicalId) -Encoding UTF8
-        Set-Content -LiteralPath (Join-Path $datasetDir 'definition.pbism') `
-            -Value (Get-DatasetDefinitionPropsJson) -Encoding UTF8
+        Write-Utf8NoBom -Path (Join-Path $root "$dsName.pbip") `
+            -Content (Get-PbipProjectJson)
+        Write-Utf8NoBom -Path (Join-Path $datasetDir '.platform') `
+            -Content (Get-DatasetPlatformJson -Name $dsName -LogicalId $logicalId)
+        Write-Utf8NoBom -Path (Join-Path $datasetDir 'definition.pbism') `
+            -Content (Get-DatasetDefinitionPropsJson)
         & $Log info "Dataset GUID: $logicalId"
+
+        # Final safety sweep: Power BI Desktop refuses any PBIP file that has a
+        # UTF-8 BOM. Strip a BOM from every file in the finished project --
+        # including TMDL files written by pbi-tools.
+        $strippedCount = (
+            Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { Remove-Utf8Bom -Path $_.FullName } |
+                Measure-Object
+        ).Count
+        if ($strippedCount -gt 0) {
+            & $Log info "Stripped a UTF-8 BOM from $strippedCount file(s)."
+        }
         & $Log success 'PBIP structure assembled.'
 
         # --- Step 4: cleanup ---------------------------------------------
