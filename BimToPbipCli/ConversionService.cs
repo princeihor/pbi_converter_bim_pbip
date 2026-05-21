@@ -12,9 +12,9 @@ namespace BimToPbipCli;
 /// </summary>
 public sealed class ConversionService
 {
-    private readonly ConsoleLogger _log;
+    private readonly IStepLogger _log;
 
-    public ConversionService(ConsoleLogger log)
+    public ConversionService(IStepLogger log)
     {
         _log = log;
     }
@@ -302,14 +302,14 @@ public sealed class ConversionService
         var datasetDir = Path.Combine(outputRoot, PbipTemplates.DatasetFolderName);
         var definitionDir = Path.Combine(datasetDir, PbipTemplates.DefinitionFolderName);
 
-        Console.Out.WriteLine();
+        _log.Detail(string.Empty);
         _log.Success("Conversion complete.");
-        Console.Out.WriteLine($"  PBIP project root : {outputRoot}");
-        Console.Out.WriteLine($"  Project file      : {Path.Combine(outputRoot, datasetName + ".pbip")}");
-        Console.Out.WriteLine($"  Dataset folder    : {datasetDir}");
-        Console.Out.WriteLine($"  Model definition  : {definitionDir} (TMDL)");
-        Console.Out.WriteLine();
-        Console.Out.WriteLine("  Created: a PBIP dataset (semantic model) project. No report (.Report) part");
-        Console.Out.WriteLine("  was generated — open the .pbip in Power BI Desktop to add a report.");
+        _log.Detail($"  PBIP project root : {outputRoot}");
+        _log.Detail($"  Project file      : {Path.Combine(outputRoot, datasetName + ".pbip")}");
+        _log.Detail($"  Dataset folder    : {datasetDir}");
+        _log.Detail($"  Model definition  : {definitionDir} (TMDL)");
+        _log.Detail(string.Empty);
+        _log.Detail("  Created: a PBIP dataset (semantic model) project. No report (.Report) part");
+        _log.Detail("  was generated — open the .pbip in Power BI Desktop to add a report.");
     }
 }

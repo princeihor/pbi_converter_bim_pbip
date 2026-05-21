@@ -1,7 +1,18 @@
 using BimToPbipCli;
+using BimToPbipCli.WebUi;
 
-// Entry point. Responsibilities are kept thin: parse arguments, delegate to the
-// conversion service, map the outcome to a process exit code.
+// Entry point. Responsibilities are kept thin: pick the mode, delegate, and
+// map the outcome to a process exit code.
+
+// No arguments (e.g. double-clicked in Explorer) or an explicit --ui flag
+// launches the browser-based UI. Otherwise run as a classic CLI.
+var wantsUi = args.Length == 0
+    || Array.Exists(args, a => string.Equals(a, "--ui", StringComparison.OrdinalIgnoreCase));
+
+if (wantsUi)
+{
+    return (int)WebUiServer.Launch();
+}
 
 var log = new ConsoleLogger();
 

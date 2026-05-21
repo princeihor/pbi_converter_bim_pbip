@@ -1,10 +1,17 @@
 # BimToPbipCli
 
-A Windows-oriented (cross-platform .NET 8) command-line utility that converts a
-Tabular `model.bim` file into a **PBIP-compatible project folder**, driving the
-existing [`pbi-tools`](https://pbi.tools/cli/) CLI under the hood.
+A Windows-oriented (cross-platform .NET 8) utility that converts a Tabular
+`model.bim` file into a **PBIP-compatible project folder**, driving the existing
+[`pbi-tools`](https://pbi.tools/cli/) CLI under the hood.
 
-It automates the steps you would otherwise run by hand:
+It runs in **two modes**:
+
+* **Web UI** — start the `.exe` with no arguments (or double-click it in
+  Explorer). It opens a local page in your browser where you pick files with
+  native dialogs and click **Convert**. See *Quick start* below.
+* **Command line** — pass `--bim ...` for scripting / CI. See *Usage* below.
+
+Either way it automates the steps you would otherwise run by hand:
 
 1. Run `pbi-tools convert` to turn `model.bim` into a TMDL model folder.
 2. Wrap that TMDL output in a PBIP-style project layout (`dataset/definition/`).
@@ -13,6 +20,27 @@ It automates the steps you would otherwise run by hand:
 
 The result is a **dataset-only PBIP project** (a semantic model, no report). You
 can open the generated `.pbip` in Power BI Desktop and add a report there.
+
+---
+
+## Quick start (Web UI — no command line)
+
+1. Build a standalone executable once (see *Publish a standalone `.exe`* below),
+   or ask whoever set this up for the prebuilt `BimToPbipCli.exe`.
+2. Make sure `pbi-tools` is installed (see *Requirements*).
+3. **Double-click `BimToPbipCli.exe`.** A small console window appears and your
+   default browser opens the converter page automatically.
+4. In the page:
+   * Click **Browse…** next to *model.bim file* and pick your `.bim`.
+   * Optionally choose an output folder, dataset name, and `pbi-tools` path
+     (leave blank to use the defaults / `PBI_TOOLS_PATH` / `PATH`).
+   * Click **Convert**. The live log shows each step.
+5. On success, click **Open project folder** to jump to the result in Explorer.
+6. To stop the tool, close the small console window.
+
+The UI binds only to `http://localhost:<random-port>` on your own machine — it
+is not exposed to the network. The native file/folder pickers are Windows-only;
+on other platforms type the paths manually.
 
 ---
 
@@ -230,6 +258,13 @@ BimToPbipCli/
   ConversionService.cs     # the 5-step conversion pipeline
   ConversionResult.cs      # typed result
   ConversionException.cs   # carries an ExitCode for explicit failure handling
+  IStepLogger.cs           # logging abstraction shared by CLI and web UI
+  ConsoleLogger.cs         # IStepLogger -> stdout/stderr (CLI mode)
+  CapturingLogger.cs       # IStepLogger -> in-memory list (web UI mode)
+  WebUi/
+    WebUiServer.cs         # local HttpListener server: serves the page + JSON API
+    IndexPage.cs           # the single-page HTML/CSS/JS UI
+    NativeFilePicker.cs    # native Windows file/folder dialogs (via PowerShell)
 README.md
 ```
 

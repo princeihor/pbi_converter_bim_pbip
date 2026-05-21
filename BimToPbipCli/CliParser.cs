@@ -12,6 +12,9 @@ public static class CliParser
                        using the pbi-tools CLI.
 
         USAGE:
+          BimToPbipCli                 Launch the browser-based UI (also happens when
+                                       the .exe is started with no arguments / double-clicked).
+          BimToPbipCli --ui            Force the browser-based UI explicitly.
           BimToPbipCli --bim <path> [--out <path>] [--dataset <name>]
                        [--pbiToolsPath <path>] [--modelSerialization <format>]
                        [--keepTemp] [--help]
