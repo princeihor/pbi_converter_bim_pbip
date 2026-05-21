@@ -80,11 +80,23 @@ Item-properties file for the report; binds the report to its semantic model.
 The report canvas (legacy single-file report format — still fully supported;
 Desktop upgrades it to PBIR on save if needed).
 
-- `config` — stringified JSON of report-wide settings. Minimal on purpose:
-  only `version` `"5.59"` (taken verbatim from the reference report). Desktop
-  fills in the rest (theme, etc.) on open. Kept minimal so nothing dangles
-  (e.g. no theme is referenced without a matching resource package).
+- `config` — stringified JSON of report-wide settings:
+  - `version` `"5.59"` — report layout schema version (from the reference).
+  - `themeCollection.baseTheme` — the active theme. **This is required.**
+    Power BI Desktop's ribbon dereferences `config.themeCollection` while
+    rendering; if it is missing the report fails to render with
+    *"Cannot read properties of undefined (reading 'customTheme')"*.
+    `CY24SU10` is a built-in base theme (Power BI resolves built-in themes
+    itself — no theme file has to exist in the project). `version`/`type`
+    are taken verbatim from the reference report.
+  - `activeSectionIndex` `0` — the first page is active.
+  - `defaultDrillFilterOtherVisuals` `true` — standard default.
 - `layoutOptimization` `0` — standard (non-mobile-optimized) layout.
+- `resourcePackages` — records the built-in base theme. The `SharedResources`
+  package (type `2`) with item `BaseThemes/CY24SU10.json` (type `202`) is how
+  the legacy format references a built-in base theme; the path is resolved by
+  Power BI internally, no file is shipped. This pairs with
+  `config.themeCollection.baseTheme` so the theme resolves cleanly.
 - `sections` — the report pages. Exactly one blank page so the report is
   valid and openable:
   - `name` — unique page id (`{{PAGE_NAME}}` token).

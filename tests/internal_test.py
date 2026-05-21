@@ -315,6 +315,17 @@ def validate(out_root: Path, name: str) -> None:
           "report.json has >= 1 page")
     check(bool(sections[0].get("name")), "report.json page has a name")
 
+    # report.json : the theme must be present, otherwise Power BI Desktop
+    # crashes rendering the report ("...undefined (reading 'customTheme')").
+    cfg = json.loads(report["config"])
+    base_theme = cfg.get("themeCollection", {}).get("baseTheme", {}).get("name")
+    check(bool(base_theme),
+          "report.json config has themeCollection.baseTheme (theme render crash guard)")
+    pkgs = report.get("resourcePackages", [])
+    check(any(p.get("resourcePackage", {}).get("name") == "SharedResources"
+              for p in pkgs),
+          "report.json has a SharedResources base-theme package")
+
     # definition.pbism : parses.
     _load_json(sm_dir / "definition.pbism")
 
