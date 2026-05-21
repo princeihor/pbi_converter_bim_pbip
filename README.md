@@ -87,6 +87,42 @@ dotnet build -c Release
 
 ---
 
+## Publish a standalone `.exe` (no .NET install needed)
+
+To produce a single self-contained executable that runs on machines **without**
+the .NET runtime installed:
+
+```powershell
+dotnet publish BimToPbipCli -c Release -r win-x64 --self-contained true `
+    -p:PublishSingleFile=true `
+    -p:IncludeNativeLibrariesForSelfExtract=true `
+    -p:EnableCompressionInSingleFile=true
+```
+
+The resulting executable is at:
+
+```
+BimToPbipCli\bin\Release\net8.0\win-x64\publish\BimToPbipCli.exe
+```
+
+Copy that single file anywhere and run it directly:
+
+```powershell
+.\BimToPbipCli.exe --bim "C:\Models\MyModel.bim" --out "C:\PBIP\MyModel" --dataset "MyModelDataset"
+```
+
+Notes:
+* `-r win-x64` targets 64-bit Windows. Use `win-arm64` for ARM, or `linux-x64` /
+  `osx-x64` for other platforms.
+* `--self-contained true` bundles the .NET runtime — the target machine needs
+  **no .NET install**. The `.exe` is larger (~15 MB+) as a result.
+* For a small `.exe` that *requires* .NET 8 to be installed on the target, use
+  `--self-contained false -p:PublishSingleFile=true` instead.
+* `pbi-tools` is still an external dependency and must be installed separately
+  on the target machine (see Requirements above).
+
+---
+
 ## Usage
 
 ```
