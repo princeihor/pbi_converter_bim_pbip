@@ -23,10 +23,25 @@ can open the generated `.pbip` in Power BI Desktop and add a report there.
 
 ---
 
+## Getting the executable
+
+You have two options:
+
+* **Download a prebuilt `.exe`** — every push to this branch runs the
+  *build-windows-exe* GitHub Actions workflow (`.github/workflows/build.yml`).
+  Open the **Actions** tab, pick the latest successful run, and download the
+  **`BimToPbipCli-win-x64`** artifact. It is a standalone, self-contained
+  executable — no .NET installation is required to run it.
+* **Build it yourself** — see *Publish a standalone `.exe`* below (needs the
+  .NET 8 SDK once, on the build machine only).
+
+Either way, `pbi-tools` must still be installed separately (see *Requirements*).
+
+---
+
 ## Quick start (Web UI — no command line)
 
-1. Build a standalone executable once (see *Publish a standalone `.exe`* below),
-   or ask whoever set this up for the prebuilt `BimToPbipCli.exe`.
+1. Get `BimToPbipCli.exe` (see *Getting the executable* above).
 2. Make sure `pbi-tools` is installed (see *Requirements*).
 3. **Double-click `BimToPbipCli.exe`.** A small console window appears and your
    default browser opens the converter page automatically.
