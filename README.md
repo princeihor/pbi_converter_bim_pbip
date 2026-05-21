@@ -1,17 +1,10 @@
 # BimToPbipCli
 
-A Windows-oriented (cross-platform .NET 8) utility that converts a Tabular
-`model.bim` file into a **PBIP-compatible project folder**, driving the existing
+A Windows utility that converts a Tabular `model.bim` file into a
+**PBIP-compatible project folder**, driving the existing
 [`pbi-tools`](https://pbi.tools/cli/) CLI under the hood.
 
-It runs in **two modes**:
-
-* **Web UI** — start the `.exe` with no arguments (or double-click it in
-  Explorer). It opens a local page in your browser where you pick files with
-  native dialogs and click **Convert**. See *Quick start* below.
-* **Command line** — pass `--bim ...` for scripting / CI. See *Usage* below.
-
-Either way it automates the steps you would otherwise run by hand:
+It automates the steps you would otherwise run by hand:
 
 1. Run `pbi-tools convert` to turn `model.bim` into a TMDL model folder.
 2. Wrap that TMDL output in a PBIP-style project layout (`dataset/definition/`).
@@ -21,11 +14,78 @@ Either way it automates the steps you would otherwise run by hand:
 The result is a **dataset-only PBIP project** (a semantic model, no report). You
 can open the generated `.pbip` in Power BI Desktop and add a report there.
 
+There are **two implementations** in this repo — pick the one that fits your
+machine:
+
+| Implementation | Folder | Best when |
+|----------------|--------|-----------|
+| **PowerShell** (recommended) | [`powershell/`](powershell/) | **You have no admin rights / cannot install anything.** PowerShell ships with Windows, so it just runs. Includes a GUI window. |
+| **.NET 8 C#** | [`BimToPbipCli/`](BimToPbipCli/) | You can build/run a .NET app, or want a standalone `.exe` and a browser-based UI. |
+
+> **Why the PowerShell version exists.** An unsigned downloaded `.exe` is blocked
+> by Windows SmartScreen ("Windows protected your PC" / unknown publisher), and
+> code-signing it requires a paid certificate. A PowerShell **script** is not an
+> executable, so it is not subject to that block — it runs on a locked-down,
+> non-admin machine with nothing to install.
+
 ---
 
-## Getting the executable
+## Easiest path — no installation, no admin rights (PowerShell)
 
-You have two options:
+This is the recommended way if you cannot install software on your laptop.
+
+1. Get the two files from the [`powershell/`](powershell/) folder:
+   `bim-to-pbip.ps1` and `BimToPbip.cmd` (keep them in the **same folder**).
+2. **Double-click `BimToPbip.cmd`.** A GUI window opens — no install, no admin
+   prompt. (The `.cmd` just runs the script with `-ExecutionPolicy Bypass`, so
+   it works even when PowerShell script execution is otherwise restricted.)
+3. In the window:
+   * Click **Browse…** next to *Model .bim file* and pick your `.bim`.
+   * Optionally set an output folder and dataset name.
+   * Leave **pbi-tools path** blank — on the first run the tool **downloads
+     `pbi-tools` automatically** into your user profile
+     (`%LOCALAPPDATA%\BimToPbip\pbi-tools`, no admin rights needed). You can
+     also click **Download** to fetch it ahead of time, or **Browse…** to point
+     at a copy you already have.
+   * Click **Convert**. The log shows each step.
+4. On success you are offered to open the resulting project folder.
+
+`pbi-tools` itself is launched by the script (not double-clicked by you), and
+the script clears the "downloaded from the internet" mark on it, so SmartScreen
+does not get in the way.
+
+### PowerShell — command line
+
+The same script works headless for scripting / CI (no GUI):
+
+```powershell
+# from the powershell/ folder
+.\bim-to-pbip.ps1 -BimPath "C:\Models\MyModel.bim"
+.\bim-to-pbip.ps1 -BimPath "C:\Models\MyModel.bim" -OutputRoot "C:\PBIP\MyModel" -DatasetName "MyModelDataset"
+.\bim-to-pbip.ps1 -BimPath "C:\Models\MyModel.bim" -PbiToolsPath "C:\tools\pbi-tools\pbi-tools.exe" -KeepTemp
+```
+
+| Parameter        | Description |
+|------------------|-------------|
+| `-BimPath`       | (required for headless mode) Path to the input `model.bim`. |
+| `-OutputRoot`    | PBIP project root. Defaults to a folder next to the `.bim`. |
+| `-DatasetName`   | Dataset name. Defaults to the `.bim` file name. |
+| `-PbiToolsPath`  | Path to `pbi-tools(.exe)`. Falls back to `PBI_TOOLS_PATH`, `PATH`, then auto-download. |
+| `-KeepTemp`      | Keep the temporary working directory. |
+| `-NoGui`         | Never open the GUI. |
+
+Requirements for this path: **Windows with PowerShell 5.1+** (built in) and
+internet access for the one-time `pbi-tools` download. Nothing else.
+
+---
+
+## Alternative: the .NET 8 C# version
+
+The `BimToPbipCli/` project is a .NET 8 console app with the same conversion
+logic plus a **browser-based UI**. Use it if you can build .NET apps or want a
+single standalone `.exe`. The rest of this document describes that version.
+
+### Getting the executable
 
 * **Download a prebuilt `.exe`** — every push to this branch runs the
   *build-windows-exe* GitHub Actions workflow (`.github/workflows/build.yml`).
@@ -35,7 +95,11 @@ You have two options:
 * **Build it yourself** — see *Publish a standalone `.exe`* below (needs the
   .NET 8 SDK once, on the build machine only).
 
-Either way, `pbi-tools` must still be installed separately (see *Requirements*).
+> **Note:** a downloaded `.exe` triggers a one-time Windows SmartScreen warning
+> (click *More info → Run anyway*). If that is a blocker, use the PowerShell
+> version above instead.
+
+Either way, `pbi-tools` must still be available (see *Requirements*).
 
 ---
 
@@ -259,14 +323,17 @@ silent failures.
 ## Project layout
 
 ```
-BimToPbipCli/
+powershell/                # no-install, no-admin implementation
+  BimToPbip.cmd            # double-click launcher (runs the script for you)
+  bim-to-pbip.ps1          # the converter: GUI + headless CLI, auto-downloads pbi-tools
+
+BimToPbipCli/              # .NET 8 C# implementation
   BimToPbipCli.csproj      # .NET 8 console project
-  Program.cs               # entry point: parse args -> run -> exit code
+  Program.cs               # entry point: pick mode -> run -> exit code
   CliOptions.cs            # parsed options (data only)
   CliParser.cs             # argument parsing + help text (separate from business logic)
   CliParseException.cs
   ExitCode.cs              # typed exit codes
-  ConsoleLogger.cs         # step logging (stdout / stderr)
   PbiToolsLocator.cs       # resolves pbi-tools via --pbiToolsPath / PBI_TOOLS_PATH / PATH
   ProcessRunner.cs         # System.Diagnostics.Process wrapper, captures stdout/stderr
   PbipTemplates.cs         # PBIP JSON templates — single place to update for spec changes
@@ -280,6 +347,8 @@ BimToPbipCli/
     WebUiServer.cs         # local HttpListener server: serves the page + JSON API
     IndexPage.cs           # the single-page HTML/CSS/JS UI
     NativeFilePicker.cs    # native Windows file/folder dialogs (via PowerShell)
+
+.github/workflows/build.yml  # CI: builds the downloadable Windows .exe
 README.md
 ```
 
