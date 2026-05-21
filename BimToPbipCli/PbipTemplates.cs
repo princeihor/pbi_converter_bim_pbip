@@ -1,102 +1,51 @@
-using System.Text.Json;
+using System.Reflection;
 
 namespace BimToPbipCli;
 
 /// <summary>
-/// Single source of truth for the PBIP metadata files this utility emits.
-///
-/// IMPORTANT: the PBIP project format is owned by Microsoft and still evolving
-/// (Power BI Desktop "Power BI Project" / .pbip preview). If Microsoft changes
-/// the schema, only this file should need updating. The structure produced here
-/// follows the publicly documented preview layout:
-///
-///   &lt;root&gt;/
-///     &lt;dataset&gt;.pbip            -- project entry point
-///     dataset/
-///       .platform               -- Fabric/Git item metadata (type + logicalId GUID)
-///       definition.pbism        -- semantic model item properties
-///       definition/             -- TMDL model files produced by pbi-tools
-///
-/// See README.md and https://learn.microsoft.com/power-bi/developer/projects/
-/// for the authoritative, up-to-date specification.
+/// Provides the PBIP metadata files. The structure itself is NOT defined here:
+/// it lives in the <c>pbip-templates</c> folder (the single source of truth,
+/// embedded into this assembly — see <c>pbip-templates/REFERENCE.md</c> for the
+/// field-by-field rationale). This class only loads those templates and fills
+/// in the per-conversion tokens.
 /// </summary>
 public static class PbipTemplates
 {
-    /// <summary>Relative name of the dataset folder inside the project root.</summary>
-    public const string DatasetFolderName = "dataset";
+    /// <summary>Semantic-model item folder name for a given dataset name.</summary>
+    public static string SemanticModelFolderName(string datasetName) => datasetName + ".SemanticModel";
 
-    /// <summary>Relative name of the model definition folder inside the dataset folder.</summary>
-    public const string DefinitionFolderName = "definition";
+    /// <summary>Report item folder name for a given dataset name.</summary>
+    public static string ReportFolderName(string datasetName) => datasetName + ".Report";
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    /// <summary>A fresh 20-hex-character report page id, as Power BI Desktop names pages.</summary>
+    public static string NewPageName() => Guid.NewGuid().ToString("N")[..20];
+
+    /// <summary>The .pbip project file, pointing at the report folder.</summary>
+    public static string ProjectFile(string reportFolderName) =>
+        LoadTemplate("pbip-templates.project.pbip")
+            .Replace("{{REPORT_FOLDER}}", reportFolderName);
+
+    /// <summary>The semantic model's definition.pbism item-properties file.</summary>
+    public static string SemanticModelDefinition() =>
+        LoadTemplate("pbip-templates.SemanticModel.definition.pbism");
+
+    /// <summary>The report's definition.pbir file, referencing the semantic model by path.</summary>
+    public static string ReportDefinition(string semanticModelFolderName) =>
+        LoadTemplate("pbip-templates.Report.definition.pbir")
+            .Replace("{{SEMANTIC_MODEL_FOLDER}}", semanticModelFolderName);
+
+    /// <summary>The report's report.json (a blank, openable single page).</summary>
+    public static string ReportJson(string pageName) =>
+        LoadTemplate("pbip-templates.Report.report.json")
+            .Replace("{{PAGE_NAME}}", pageName);
+
+    private static string LoadTemplate(string resourceName)
     {
-        WriteIndented = true,
-    };
-
-    /// <summary>
-    /// The .pbip project file. Points at the dataset artifact by relative path.
-    /// </summary>
-    public static string PbipProjectFile()
-    {
-        var doc = new Dictionary<string, object?>
-        {
-            ["version"] = "1.0",
-            ["artifacts"] = new object[]
-            {
-                new Dictionary<string, object?>
-                {
-                    ["dataset"] = new Dictionary<string, object?>
-                    {
-                        ["path"] = DatasetFolderName,
-                    },
-                },
-            },
-            ["settings"] = new Dictionary<string, object?>
-            {
-                ["enableAutoRecovery"] = true,
-            },
-        };
-
-        return Serialize(doc);
+        var assembly = typeof(PbipTemplates).Assembly;
+        using var stream = assembly.GetManifestResourceStream(resourceName)
+            ?? throw new InvalidOperationException(
+                $"Embedded PBIP template '{resourceName}' was not found in the assembly.");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
-
-    /// <summary>
-    /// The dataset's .platform file. Carries the dataset display name and a
-    /// generated GUID (logicalId) that uniquely identifies the item.
-    /// </summary>
-    public static string DatasetPlatformFile(string datasetName, Guid logicalId)
-    {
-        var doc = new Dictionary<string, object?>
-        {
-            ["$schema"] = "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
-            ["metadata"] = new Dictionary<string, object?>
-            {
-                ["type"] = "SemanticModel",
-                ["displayName"] = datasetName,
-            },
-            ["config"] = new Dictionary<string, object?>
-            {
-                ["version"] = "2.0",
-                ["logicalId"] = logicalId.ToString(),
-            },
-        };
-
-        return Serialize(doc);
-    }
-
-    /// <summary>
-    /// The dataset's definition.pbism file (semantic model item properties).
-    /// </summary>
-    public static string DatasetDefinitionPropertiesFile()
-    {
-        var doc = new Dictionary<string, object?>
-        {
-            ["version"] = "4.0",
-            ["settings"] = new Dictionary<string, object?>(),
-        };
-
-        return Serialize(doc);
-    }
-
-    private static string Serialize(object value) => JsonSerializer.Serialize(value, JsonOptions);
 }

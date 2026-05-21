@@ -8,36 +8,27 @@ namespace BimToPbipCli;
 public static class CliParser
 {
     public const string HelpText = """
-        BimToPbipCli — converts a Tabular model.bim into a PBIP-compatible project folder
-                       using the pbi-tools CLI.
+        BimToPbipCli — converts a Tabular model.bim into a Power BI Desktop project (PBIP).
+                       No pbi-tools, no .NET install, no network access required.
 
         USAGE:
           BimToPbipCli                 Launch the browser-based UI (also happens when
                                        the .exe is started with no arguments / double-clicked).
           BimToPbipCli --ui            Force the browser-based UI explicitly.
-          BimToPbipCli --bim <path> [--out <path>] [--dataset <name>]
-                       [--pbiToolsPath <path>] [--modelSerialization <format>]
-                       [--keepTemp] [--help]
+          BimToPbipCli --bim <path> [--out <path>] [--dataset <name>] [--help]
 
         OPTIONS:
           --bim <path>                 (required) Path to the input model.bim file.
           --out <path>                 PBIP project root folder. Defaults to a
                                        sub-folder named after the dataset, created
                                        next to the .bim file.
-          --dataset <name>             Dataset name. Defaults to the .bim file name
-                                       without extension.
-          --pbiToolsPath <path>        Path to pbi-tools(.exe). If omitted, the
-                                       PBI_TOOLS_PATH environment variable is used,
-                                       then the system PATH.
-          --modelSerialization <fmt>   Serialization passed to "pbi-tools convert".
-                                       Defaults to "Tmdl".
-          --keepTemp                   Keep the temporary working directory.
+          --dataset <name>             Dataset / project name. Defaults to the .bim
+                                       file name without extension.
           --help, -h                   Show this help and exit.
 
         EXAMPLES:
           BimToPbipCli --bim "C:\Models\MyModel.bim"
-          BimToPbipCli --bim "C:\Models\MyModel.bim" --out "C:\PBIP\MyModel" --dataset "MyModelDataset"
-          BimToPbipCli --bim "C:\Models\MyModel.bim" --pbiToolsPath "C:\tools\pbi-tools\pbi-tools.exe"
+          BimToPbipCli --bim "C:\Models\MyModel.bim" --out "C:\PBIP\MyModel" --dataset "MyModel"
         """;
 
     /// <summary>
@@ -49,9 +40,6 @@ public static class CliParser
         string? bimPath = null;
         string? outputRoot = null;
         string? datasetName = null;
-        string? pbiToolsPath = null;
-        string? modelSerialization = null;
-        var keepTemp = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -64,10 +52,6 @@ public static class CliParser
                 case "-?":
                 case "/?":
                     return new CliOptions { BimPath = string.Empty, ShowHelp = true };
-
-                case "--keeptemp":
-                    keepTemp = true;
-                    break;
 
                 case "--bim":
                     bimPath = TakeValue(args, ref i, name, inlineValue);
@@ -82,14 +66,6 @@ public static class CliParser
                 case "--dataset":
                 case "--datasetname":
                     datasetName = TakeValue(args, ref i, name, inlineValue);
-                    break;
-
-                case "--pbitoolspath":
-                    pbiToolsPath = TakeValue(args, ref i, name, inlineValue);
-                    break;
-
-                case "--modelserialization":
-                    modelSerialization = TakeValue(args, ref i, name, inlineValue);
                     break;
 
                 default:
@@ -107,9 +83,6 @@ public static class CliParser
             BimPath = bimPath,
             OutputRoot = string.IsNullOrWhiteSpace(outputRoot) ? null : outputRoot,
             DatasetName = string.IsNullOrWhiteSpace(datasetName) ? null : datasetName,
-            PbiToolsPath = string.IsNullOrWhiteSpace(pbiToolsPath) ? null : pbiToolsPath,
-            ModelSerialization = string.IsNullOrWhiteSpace(modelSerialization) ? "Tmdl" : modelSerialization,
-            KeepTemp = keepTemp,
             ShowHelp = false,
         };
     }

@@ -14,22 +14,8 @@ public sealed class CliOptions
     /// </summary>
     public string? OutputRoot { get; init; }
 
-    /// <summary>Dataset name. When null, the .bim file name without extension is used.</summary>
+    /// <summary>Dataset / project name. When null, the .bim file name without extension is used.</summary>
     public string? DatasetName { get; init; }
-
-    /// <summary>
-    /// Explicit path to pbi-tools(.exe). When null the utility falls back to the
-    /// PBI_TOOLS_PATH environment variable and then to the system PATH.
-    /// </summary>
-    public string? PbiToolsPath { get; init; }
-
-    /// <summary>
-    /// Model serialization format passed to "pbi-tools convert". Defaults to "Tmdl".
-    /// </summary>
-    public string ModelSerialization { get; init; } = "Tmdl";
-
-    /// <summary>When true, the temporary working directory is kept for inspection.</summary>
-    public bool KeepTemp { get; init; }
 
     /// <summary>When true, only help text is printed and the program exits.</summary>
     public bool ShowHelp { get; init; }

@@ -13,11 +13,11 @@ public enum ExitCode
     /// <summary>The input model.bim file does not exist.</summary>
     BimNotFound = 2,
 
-    /// <summary>The pbi-tools CLI could not be located.</summary>
-    PbiToolsNotFound = 3,
+    /// <summary>The input model.bim is not a valid TMSL JSON model.</summary>
+    BimInvalid = 3,
 
-    /// <summary>The pbi-tools "convert" command failed (non-zero exit code).</summary>
-    ConvertFailed = 4,
+    /// <summary>The assembled PBIP project failed its structural validation.</summary>
+    ValidationFailed = 4,
 
     /// <summary>Creating or writing files in the target directory failed.</summary>
     OutputWriteFailed = 5,

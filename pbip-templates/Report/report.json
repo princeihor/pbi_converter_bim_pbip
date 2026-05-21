@@ -1,0 +1,17 @@
+{
+  "config": "{\"version\":\"5.59\"}",
+  "layoutOptimization": 0,
+  "sections": [
+    {
+      "name": "{{PAGE_NAME}}",
+      "displayName": "Page 1",
+      "displayOption": 1,
+      "ordinal": 0,
+      "height": 720,
+      "width": 1280,
+      "config": "{}",
+      "filters": "[]",
+      "visualContainers": []
+    }
+  ]
+}

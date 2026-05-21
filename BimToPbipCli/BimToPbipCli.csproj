@@ -11,4 +11,25 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
+  <!--
+    The canonical PBIP templates (../pbip-templates) are the single source of
+    truth for the PBIP structure, shared with the PowerShell tool and the
+    internal test. They are embedded so the published .exe is self-contained.
+    LogicalName is fixed so PbipTemplates can load them by a stable name.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="../pbip-templates/project.pbip">
+      <LogicalName>pbip-templates.project.pbip</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="../pbip-templates/SemanticModel/definition.pbism">
+      <LogicalName>pbip-templates.SemanticModel.definition.pbism</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="../pbip-templates/Report/definition.pbir">
+      <LogicalName>pbip-templates.Report.definition.pbir</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="../pbip-templates/Report/report.json">
+      <LogicalName>pbip-templates.Report.report.json</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
 </Project>

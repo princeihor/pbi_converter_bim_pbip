@@ -1,45 +1,42 @@
 using System.Text;
+using System.Text.Json;
 
 namespace BimToPbipCli;
 
 /// <summary>
-/// Orchestrates the BIM → PBIP conversion:
-///   1. validate environment (input .bim, pbi-tools, temp workspace);
-///   2. run "pbi-tools convert" to produce a TMDL model folder;
-///   3. assemble a PBIP-compatible project folder around it;
-///   4. clean up the temporary workspace.
+/// Converts a Tabular model.bim into a Power BI Desktop project (PBIP).
 ///
-/// All failures are reported through <see cref="ConversionException"/> with an
+/// A .bim file IS TMSL JSON, so it is stored directly as the semantic model's
+/// model.bim — the "PBIP with TMSL" layout that Power BI Desktop itself uses.
+/// No model conversion / pbi-tools, no network access is needed. The PBIP file
+/// structure comes entirely from the embedded templates (see
+/// <see cref="PbipTemplates"/> and pbip-templates/REFERENCE.md).
+///
+/// Pipeline: validate input -> assemble project -> validate output.
+/// Every failure surfaces as a <see cref="ConversionException"/> with an
 /// explicit <see cref="ExitCode"/> — there are no silent failures.
 /// </summary>
 public sealed class ConversionService
 {
-    /// <summary>UTF-8 encoding that emits no byte-order mark.</summary>
+    /// <summary>UTF-8 encoding that emits no byte-order mark (Power BI rejects a BOM).</summary>
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
     private readonly IStepLogger _log;
 
-    public ConversionService(IStepLogger log)
-    {
-        _log = log;
-    }
+    public ConversionService(IStepLogger log) => _log = log;
 
     public ConversionResult Run(CliOptions options)
     {
-        string? tempDir = null;
         try
         {
             var bimPath = resolveBimPath(options);
+            validateBim(bimPath);
+
             var datasetName = resolveDatasetName(options, bimPath);
             var outputRoot = resolveOutputRoot(options, bimPath, datasetName);
-            var pbiToolsPath = resolvePbiTools(options);
 
-            tempDir = createTempWorkspace();
-
-            var modelFolder = runConvert(pbiToolsPath, bimPath, tempDir, options.ModelSerialization);
-            assemblePbipProject(modelFolder, outputRoot, datasetName);
-
-            cleanupTemp(tempDir, options.KeepTemp);
+            assemblePbipProject(bimPath, outputRoot, datasetName);
+            validatePbipProject(outputRoot, datasetName);
 
             printSummary(outputRoot, datasetName);
 
@@ -47,24 +44,22 @@ public sealed class ConversionService
             {
                 ExitCode = ExitCode.Success,
                 PbipProjectPath = outputRoot,
-                Message = $"PBIP project (dataset only) created at: {outputRoot}",
+                Message = $"PBIP project created at: {outputRoot}",
             };
         }
         catch (ConversionException ex)
         {
             _log.Error(ex.Message);
-            tryCleanupOnFailure(tempDir, options.KeepTemp);
             return new ConversionResult { ExitCode = ex.ExitCode, Message = ex.Message };
         }
         catch (Exception ex)
         {
             _log.Error($"Unexpected error: {ex.Message}");
-            tryCleanupOnFailure(tempDir, options.KeepTemp);
             return new ConversionResult { ExitCode = ExitCode.UnexpectedError, Message = ex.Message };
         }
     }
 
-    // ----- Step 1: environment validation -------------------------------------------------
+    // ----- Step 1: input validation -------------------------------------------------------
 
     private string resolveBimPath(CliOptions options)
     {
@@ -83,15 +78,73 @@ public sealed class ConversionService
             throw new ConversionException(ExitCode.BimNotFound, $"Input model.bim not found: {fullPath}");
         }
 
-        _log.Info($"Input model:   {fullPath}");
         return fullPath;
     }
 
-    private static string resolveDatasetName(CliOptions options, string bimPath)
+    /// <summary>
+    /// Confirms the input .bim parses as a JSON object (TMSL). A missing
+    /// top-level 'model' member is only a warning so an unusual but valid
+    /// complex model is never blocked.
+    /// </summary>
+    private void validateBim(string bimPath)
     {
-        return string.IsNullOrWhiteSpace(options.DatasetName)
+        _log.Step("Validating input model...");
+
+        string text;
+        try
+        {
+            text = File.ReadAllText(bimPath);
+        }
+        catch (Exception ex)
+        {
+            throw new ConversionException(ExitCode.BimInvalid, $"Could not read '{bimPath}': {ex.Message}", ex);
+        }
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            throw new ConversionException(ExitCode.BimInvalid, $"Input .bim file is empty: {bimPath}");
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                throw new ConversionException(ExitCode.BimInvalid,
+                    $"Input .bim must be a JSON object (TMSL model): {bimPath}");
+            }
+
+            if (!doc.RootElement.TryGetProperty("model", out _))
+            {
+                _log.Warn("Input .bim has no top-level 'model' member — copying it anyway.");
+            }
+        }
+        catch (JsonException ex)
+        {
+            throw new ConversionException(ExitCode.BimInvalid,
+                $"Input .bim is not valid JSON ({bimPath}): {ex.Message}", ex);
+        }
+
+        _log.Info($"Input model:   {bimPath}");
+    }
+
+    private string resolveDatasetName(CliOptions options, string bimPath)
+    {
+        var raw = string.IsNullOrWhiteSpace(options.DatasetName)
             ? Path.GetFileNameWithoutExtension(bimPath)
             : options.DatasetName.Trim();
+
+        // The dataset name becomes a folder name, so drop illegal characters.
+        var invalid = Path.GetInvalidFileNameChars();
+        var safe = new string(raw.Where(c => Array.IndexOf(invalid, c) < 0).ToArray()).Trim();
+        if (string.IsNullOrEmpty(safe))
+        {
+            throw new ConversionException(ExitCode.InvalidArguments,
+                $"Dataset name '{raw}' contains no valid file-name characters.");
+        }
+
+        _log.Info($"Dataset name:  {safe}");
+        return safe;
     }
 
     private string resolveOutputRoot(CliOptions options, string bimPath, string datasetName)
@@ -103,145 +156,49 @@ public sealed class ConversionService
         }
         else
         {
-            // Default: a sibling sub-folder next to the .bim file.
             var bimDir = Path.GetDirectoryName(bimPath) ?? Directory.GetCurrentDirectory();
             root = Path.Combine(bimDir, datasetName);
         }
 
-        _log.Info($"Dataset name:  {datasetName}");
         _log.Info($"Output root:   {root}");
         return root;
     }
 
-    private string resolvePbiTools(CliOptions options)
+    // ----- Step 2: assemble PBIP project --------------------------------------------------
+
+    private void assemblePbipProject(string bimPath, string outputRoot, string datasetName)
     {
-        _log.Step("Checking environment for pbi-tools...");
-        var resolved = PbiToolsLocator.Resolve(options.PbiToolsPath);
-        if (resolved is null)
-        {
-            throw new ConversionException(
-                ExitCode.PbiToolsNotFound,
-                "pbi-tools CLI could not be located. Provide --pbiToolsPath, set the " +
-                $"{PbiToolsLocator.EnvironmentVariableName} environment variable, or add pbi-tools to PATH. " +
-                "Download it from https://pbi.tools/cli/.");
-        }
+        _log.Step("Assembling PBIP project (TMSL layout)...");
 
-        _log.Info($"pbi-tools:     {resolved}");
-        return resolved;
-    }
-
-    private string createTempWorkspace()
-    {
-        var tempDir = Path.Combine(Path.GetTempPath(), "bim-to-pbip", Guid.NewGuid().ToString("N"));
-        try
-        {
-            Directory.CreateDirectory(tempDir);
-        }
-        catch (Exception ex)
-        {
-            throw new ConversionException(ExitCode.UnexpectedError, $"Could not create temporary workspace '{tempDir}': {ex.Message}", ex);
-        }
-
-        _log.Info($"Temp workspace: {tempDir}");
-        return tempDir;
-    }
-
-    // ----- Step 2: pbi-tools convert ------------------------------------------------------
-
-    private string runConvert(string pbiToolsPath, string bimPath, string tempDir, string modelSerialization)
-    {
-        var modelFolder = Path.Combine(tempDir, "model");
-        _log.Step($"Running pbi-tools convert ({modelSerialization})...");
-
-        var args = new List<string>
-        {
-            "convert",
-            bimPath,
-            modelFolder,
-            modelSerialization,
-        };
-
-        ProcessResult result;
-        try
-        {
-            result = ProcessRunner.Run(pbiToolsPath, args);
-        }
-        catch (InvalidOperationException ex)
-        {
-            throw new ConversionException(ExitCode.ConvertFailed, ex.Message, ex);
-        }
-
-        if (!string.IsNullOrWhiteSpace(result.StandardOutput))
-        {
-            foreach (var line in result.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            {
-                _log.Info($"  pbi-tools> {line.TrimEnd()}");
-            }
-        }
-
-        if (!result.Succeeded)
-        {
-            var detail = string.IsNullOrWhiteSpace(result.StandardError)
-                ? "(no stderr output)"
-                : result.StandardError.Trim();
-            throw new ConversionException(
-                ExitCode.ConvertFailed,
-                $"pbi-tools convert failed with exit code {result.ExitCode}.{Environment.NewLine}{detail}");
-        }
-
-        if (!Directory.Exists(modelFolder) || !Directory.EnumerateFileSystemEntries(modelFolder).Any())
-        {
-            throw new ConversionException(
-                ExitCode.ConvertFailed,
-                $"pbi-tools convert reported success but produced no output in '{modelFolder}'.");
-        }
-
-        _log.Success("Model converted to TMDL.");
-        return modelFolder;
-    }
-
-    // ----- Step 3: assemble PBIP project --------------------------------------------------
-
-    private void assemblePbipProject(string modelFolder, string outputRoot, string datasetName)
-    {
-        _log.Step("Assembling PBIP project structure...");
-
-        var datasetDir = Path.Combine(outputRoot, PbipTemplates.DatasetFolderName);
-        var definitionDir = Path.Combine(datasetDir, PbipTemplates.DefinitionFolderName);
+        var smFolder = PbipTemplates.SemanticModelFolderName(datasetName);
+        var reportFolder = PbipTemplates.ReportFolderName(datasetName);
+        var smDir = Path.Combine(outputRoot, smFolder);
+        var reportDir = Path.Combine(outputRoot, reportFolder);
 
         try
         {
             Directory.CreateDirectory(outputRoot);
-            Directory.CreateDirectory(datasetDir);
+            Directory.CreateDirectory(smDir);
+            Directory.CreateDirectory(reportDir);
 
-            // The model definition folder is replaced wholesale to keep re-runs idempotent.
-            if (Directory.Exists(definitionDir))
-            {
-                Directory.Delete(definitionDir, recursive: true);
-            }
+            // The .bim IS the TMSL model -> store it verbatim as model.bim,
+            // re-encoded as UTF-8 without a BOM.
+            File.WriteAllText(Path.Combine(smDir, "model.bim"), File.ReadAllText(bimPath), Utf8NoBom);
 
-            copyDirectory(modelFolder, definitionDir);
-
-            var logicalId = Guid.NewGuid();
-            // Power BI Desktop rejects PBIP files that begin with a UTF-8 BOM.
-            // Utf8NoBom guarantees these files are written without one.
             File.WriteAllText(
                 Path.Combine(outputRoot, datasetName + ".pbip"),
-                PbipTemplates.PbipProjectFile(),
-                Utf8NoBom);
+                PbipTemplates.ProjectFile(reportFolder), Utf8NoBom);
             File.WriteAllText(
-                Path.Combine(datasetDir, ".platform"),
-                PbipTemplates.DatasetPlatformFile(datasetName, logicalId),
-                Utf8NoBom);
+                Path.Combine(smDir, "definition.pbism"),
+                PbipTemplates.SemanticModelDefinition(), Utf8NoBom);
             File.WriteAllText(
-                Path.Combine(datasetDir, "definition.pbism"),
-                PbipTemplates.DatasetDefinitionPropertiesFile(),
-                Utf8NoBom);
+                Path.Combine(reportDir, "definition.pbir"),
+                PbipTemplates.ReportDefinition(smFolder), Utf8NoBom);
+            File.WriteAllText(
+                Path.Combine(reportDir, "report.json"),
+                PbipTemplates.ReportJson(PbipTemplates.NewPageName()), Utf8NoBom);
 
-            _log.Info($"Dataset GUID:  {logicalId}");
-
-            // Final safety sweep: strip a UTF-8 BOM from every file in the
-            // finished project, including TMDL files written by pbi-tools.
+            // Belt-and-braces: strip a UTF-8 BOM from every file in the project.
             stripBomFromTree(outputRoot);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -255,26 +212,7 @@ public sealed class ConversionService
         _log.Success("PBIP structure assembled.");
     }
 
-    private static void copyDirectory(string sourceDir, string destDir)
-    {
-        Directory.CreateDirectory(destDir);
-
-        foreach (var file in Directory.GetFiles(sourceDir))
-        {
-            File.Copy(file, Path.Combine(destDir, Path.GetFileName(file)), overwrite: true);
-        }
-
-        foreach (var dir in Directory.GetDirectories(sourceDir))
-        {
-            copyDirectory(dir, Path.Combine(destDir, Path.GetFileName(dir)));
-        }
-    }
-
-    /// <summary>
-    /// Removes a leading UTF-8 BOM (EF BB BF) from every file under <paramref name="root"/>.
-    /// PBIP files must be UTF-8 without a BOM; this guards against BOMs that may
-    /// have come from pbi-tools' TMDL output or a model.bim that already had one.
-    /// </summary>
+    /// <summary>Removes a leading UTF-8 BOM (EF BB BF) from every file under <paramref name="root"/>.</summary>
     private void stripBomFromTree(string root)
     {
         ReadOnlySpan<byte> bom = [0xEF, 0xBB, 0xBF];
@@ -296,60 +234,137 @@ public sealed class ConversionService
         }
     }
 
-    // ----- Step 4: cleanup ----------------------------------------------------------------
+    // ----- Step 3: validate the assembled project -----------------------------------------
 
-    private void cleanupTemp(string tempDir, bool keepTemp)
+    /// <summary>
+    /// Validates the finished project against the rules Power BI Desktop
+    /// enforces, so a broken project is never reported as success — this is the
+    /// guard that turns silent "Cannot read .pbip" failures into a clear error.
+    /// </summary>
+    private void validatePbipProject(string outputRoot, string datasetName)
     {
-        if (keepTemp)
+        _log.Step("Validating PBIP project...");
+
+        var smFolder = PbipTemplates.SemanticModelFolderName(datasetName);
+        var reportFolder = PbipTemplates.ReportFolderName(datasetName);
+        var smDir = Path.Combine(outputRoot, smFolder);
+        var reportDir = Path.Combine(outputRoot, reportFolder);
+
+        var pbipPath = Path.Combine(outputRoot, datasetName + ".pbip");
+        var pbirPath = Path.Combine(reportDir, "definition.pbir");
+        var reportJsonPath = Path.Combine(reportDir, "report.json");
+        var pbismPath = Path.Combine(smDir, "definition.pbism");
+        var modelPath = Path.Combine(smDir, "model.bim");
+
+        foreach (var p in new[] { pbipPath, pbirPath, reportJsonPath, pbismPath, modelPath })
         {
-            _log.Info($"--keepTemp set; temporary workspace kept at: {tempDir}");
-            return;
+            if (!File.Exists(p))
+            {
+                throw new ConversionException(ExitCode.ValidationFailed, $"PBIP validation failed: missing '{p}'.");
+            }
         }
 
-        _log.Step("Cleaning up temporary workspace...");
+        // .pbip : exactly a 'report' artifact pointing at the report folder,
+        // and never a 'dataset' artifact (Power BI's schema rejects that).
+        using (var pbip = parseJson(pbipPath))
+        {
+            if (!pbip.RootElement.TryGetProperty("artifacts", out var artifacts)
+                || artifacts.ValueKind != JsonValueKind.Array
+                || artifacts.GetArrayLength() < 1)
+            {
+                throw new ConversionException(ExitCode.ValidationFailed,
+                    $"PBIP validation failed: '{pbipPath}' has no artifacts.");
+            }
+
+            var artifact = artifacts[0];
+            if (artifact.TryGetProperty("dataset", out _))
+            {
+                throw new ConversionException(ExitCode.ValidationFailed,
+                    $"PBIP validation failed: '{pbipPath}' declares a 'dataset' artifact (Power BI rejects this).");
+            }
+
+            if (!artifact.TryGetProperty("report", out var report)
+                || !report.TryGetProperty("path", out var reportPath)
+                || reportPath.GetString() != reportFolder)
+            {
+                throw new ConversionException(ExitCode.ValidationFailed,
+                    $"PBIP validation failed: '{pbipPath}' has no 'report' artifact pointing at '{reportFolder}'.");
+            }
+        }
+
+        // definition.pbir : relative reference to the semantic model folder.
+        using (var pbir = parseJson(pbirPath))
+        {
+            var expectedRef = "../" + smFolder;
+            var actualRef = pbir.RootElement
+                .GetProperty("datasetReference")
+                .GetProperty("byPath")
+                .GetProperty("path")
+                .GetString();
+            if (actualRef != expectedRef)
+            {
+                throw new ConversionException(ExitCode.ValidationFailed,
+                    $"PBIP validation failed: '{pbirPath}' byPath is '{actualRef}', expected '{expectedRef}'.");
+            }
+        }
+
+        // report.json : parses and has at least one page.
+        using (var reportDoc = parseJson(reportJsonPath))
+        {
+            if (!reportDoc.RootElement.TryGetProperty("sections", out var sections)
+                || sections.ValueKind != JsonValueKind.Array
+                || sections.GetArrayLength() < 1)
+            {
+                throw new ConversionException(ExitCode.ValidationFailed,
+                    $"PBIP validation failed: '{reportJsonPath}' has no report pages.");
+            }
+        }
+
+        // definition.pbism and model.bim : must parse as JSON.
+        parseJson(pbismPath).Dispose();
+        parseJson(modelPath).Dispose();
+
+        // No file in the project may carry a UTF-8 BOM.
+        foreach (var file in Directory.EnumerateFiles(outputRoot, "*", SearchOption.AllDirectories))
+        {
+            var bytes = File.ReadAllBytes(file);
+            if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            {
+                throw new ConversionException(ExitCode.ValidationFailed,
+                    $"PBIP validation failed: '{file}' starts with a UTF-8 BOM.");
+            }
+        }
+
+        _log.Success("PBIP structure validated (all checks passed).");
+    }
+
+    private static JsonDocument parseJson(string path)
+    {
         try
         {
-            Directory.Delete(tempDir, recursive: true);
+            return JsonDocument.Parse(File.ReadAllText(path));
         }
-        catch (Exception ex)
+        catch (JsonException ex)
         {
-            // Non-fatal: the project is already built. Warn and continue.
-            _log.Warn($"Could not delete temporary workspace '{tempDir}': {ex.Message}");
+            throw new ConversionException(ExitCode.ValidationFailed,
+                $"PBIP validation failed: '{path}' is not valid JSON: {ex.Message}", ex);
         }
     }
 
-    private void tryCleanupOnFailure(string? tempDir, bool keepTemp)
-    {
-        if (tempDir is null || keepTemp || !Directory.Exists(tempDir))
-        {
-            return;
-        }
-
-        try
-        {
-            Directory.Delete(tempDir, recursive: true);
-        }
-        catch
-        {
-            // Best-effort cleanup on the failure path; the original error is what matters.
-        }
-    }
-
-    // ----- Step 5: result summary ---------------------------------------------------------
+    // ----- Step 4: result summary ---------------------------------------------------------
 
     private void printSummary(string outputRoot, string datasetName)
     {
-        var datasetDir = Path.Combine(outputRoot, PbipTemplates.DatasetFolderName);
-        var definitionDir = Path.Combine(datasetDir, PbipTemplates.DefinitionFolderName);
+        var smDir = Path.Combine(outputRoot, PbipTemplates.SemanticModelFolderName(datasetName));
+        var reportDir = Path.Combine(outputRoot, PbipTemplates.ReportFolderName(datasetName));
 
         _log.Detail(string.Empty);
         _log.Success("Conversion complete.");
         _log.Detail($"  PBIP project root : {outputRoot}");
-        _log.Detail($"  Project file      : {Path.Combine(outputRoot, datasetName + ".pbip")}");
-        _log.Detail($"  Dataset folder    : {datasetDir}");
-        _log.Detail($"  Model definition  : {definitionDir} (TMDL)");
+        _log.Detail($"  Open in Power BI  : {Path.Combine(outputRoot, datasetName + ".pbip")}");
+        _log.Detail($"  Semantic model    : {smDir}");
+        _log.Detail($"  Report            : {reportDir}");
         _log.Detail(string.Empty);
-        _log.Detail("  Created: a PBIP dataset (semantic model) project. No report (.Report) part");
-        _log.Detail("  was generated — open the .pbip in Power BI Desktop to add a report.");
+        _log.Detail("  Double-click the .pbip file to open it in Power BI Desktop.");
     }
 }

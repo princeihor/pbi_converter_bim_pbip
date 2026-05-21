@@ -107,7 +107,6 @@ public static class WebUiServer
         var kind = request?.Type?.ToLowerInvariant() switch
         {
             "bim" => NativeFilePicker.PickKind.BimFile,
-            "pbitools" => NativeFilePicker.PickKind.PbiToolsExecutable,
             "folder" => NativeFilePicker.PickKind.Folder,
             _ => (NativeFilePicker.PickKind?)null,
         };
@@ -138,8 +137,6 @@ public static class WebUiServer
             BimPath = request.Bim,
             OutputRoot = NullIfBlank(request.Out),
             DatasetName = NullIfBlank(request.Dataset),
-            PbiToolsPath = NullIfBlank(request.PbiToolsPath),
-            KeepTemp = request.KeepTemp,
         };
 
         var logger = new CapturingLogger();
@@ -264,8 +261,6 @@ public static class WebUiServer
         public string Bim { get; set; } = string.Empty;
         public string? Out { get; set; }
         public string? Dataset { get; set; }
-        public string? PbiToolsPath { get; set; }
-        public bool KeepTemp { get; set; }
     }
 
     private sealed class OpenRequest

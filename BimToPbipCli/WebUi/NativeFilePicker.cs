@@ -16,7 +16,6 @@ public static class NativeFilePicker
     {
         BimFile,
         Folder,
-        PbiToolsExecutable,
     }
 
     /// <summary>
@@ -35,9 +34,6 @@ public static class NativeFilePicker
             PickKind.BimFile => BuildFileDialogScript(
                 "Select the model.bim file",
                 "BIM model (*.bim)|*.bim|All files (*.*)|*.*"),
-            PickKind.PbiToolsExecutable => BuildFileDialogScript(
-                "Select pbi-tools executable",
-                "pbi-tools (pbi-tools*.exe)|pbi-tools*.exe|All files (*.*)|*.*"),
             PickKind.Folder => BuildFolderDialogScript(),
             _ => null,
         };

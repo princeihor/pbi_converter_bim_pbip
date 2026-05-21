@@ -76,8 +76,8 @@ public static class IndexPage
         <body>
         <div class="card">
           <h1>BIM &#8594; PBIP Converter</h1>
-          <p class="sub">Convert a Tabular <code>model.bim</code> into a PBIP-compatible
-            project folder. Uses the <code>pbi-tools</code> CLI under the hood.</p>
+          <p class="sub">Convert a Tabular <code>model.bim</code> into a Power BI
+            Desktop project (PBIP). No pbi-tools, no install, no internet needed.</p>
 
           <label>model.bim file <span class="req">*</span></label>
           <div class="row">
@@ -91,18 +91,8 @@ public static class IndexPage
             <button class="browse" data-type="folder">Browse&#8230;</button>
           </div>
 
-          <label>Dataset name</label>
+          <label>Dataset / project name</label>
           <input id="dataset" type="text" placeholder="(default: the .bim file name)"/>
-
-          <label>pbi-tools path</label>
-          <div class="row">
-            <input id="pbitools" type="text" placeholder="(default: PBI_TOOLS_PATH or system PATH)"/>
-            <button class="browse" data-type="pbitools">Browse&#8230;</button>
-          </div>
-
-          <label class="check">
-            <input id="keepTemp" type="checkbox"/> Keep temporary working files
-          </label>
 
           <button id="convert" class="primary">Convert</button>
 
@@ -117,7 +107,7 @@ public static class IndexPage
 
         <script>
           const $ = id => document.getElementById(id);
-          const inputFor = { bim: 'bim', folder: 'out', pbitools: 'pbitools' };
+          const inputFor = { bim: 'bim', folder: 'out' };
 
           async function postJson(url, body) {
             const r = await fetch(url, {
@@ -156,9 +146,7 @@ public static class IndexPage
               const res = await postJson('/api/convert', {
                 bim: bim,
                 out: $('out').value.trim(),
-                dataset: $('dataset').value.trim(),
-                pbiToolsPath: $('pbitools').value.trim(),
-                keepTemp: $('keepTemp').checked
+                dataset: $('dataset').value.trim()
               });
               renderLog(res.log);
               if (res.success) {
