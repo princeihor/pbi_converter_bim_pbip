@@ -1,17 +1,17 @@
 ---
 title: Templates and Token Substitution
-last-updated: 2026-05-21
+last-updated: 2026-05-22
 relates-to: [structure, concepts]
 tags: [reference]
 ---
 
 # Templates and Token Substitution
 
-How the tool uses template files to generate the project.
+How the tool uses template files to generate the PBIP *wrapper* files.
 
 ## The Templates Folder
 
-The `pbip-templates/` directory contains the canonical PBIP structure — taken verbatim from a real Power BI Desktop export, documented in `pbip-templates/REFERENCE.md`.
+The `pbip-templates/` directory contains the canonical PBIP wrapper structure — four files taken verbatim from a real Power BI Desktop export, documented in `pbip-templates/REFERENCE.md`.
 
 ```
 pbip-templates/
@@ -24,7 +24,9 @@ pbip-templates/
   REFERENCE.md                          ← Field-by-field documentation
 ```
 
-**Key principle**: The structure is NOT defined in code. It lives here. Both PowerShell and C# tools read these templates at conversion time.
+**Key principle**: The wrapper structure is NOT defined in code. It lives here, and the tool reads these templates at conversion time.
+
+**What templates do NOT cover**: The semantic model `SemanticModel/definition/` folder. That TMDL folder is generated per-model by the Tabular Object Model (TOM) library (`TmdlSerializer.SerializeDatabaseToFolder`), not from a template. See [TOM normalization](concepts.md#tom-normalization).
 
 ---
 
@@ -92,22 +94,6 @@ The page ID is generated fresh for each conversion (ensures uniqueness).
 
 ## How the Tool Uses Templates
 
-### PowerShell
-
-1. Resolves the `pbip-templates/` folder (relative to the script)
-2. Reads each template file as a string
-3. Performs token replacement using PowerShell's `-replace` operator
-4. Writes the result to the output project folder using UTF-8 without BOM
-
-```powershell
-# Pseudocode
-$template = Get-Content "pbip-templates/project.pbip" -Raw
-$result = $template -replace "{{REPORT_FOLDER}}", "Sales.Report"
-Write-Utf8NoBom -Path "Sales/Sales.pbip" -Content $result
-```
-
-### C#
-
 1. Templates are embedded as resources in the compiled `.exe` (at build time)
 2. Code loads them from the assembly
 3. Performs token replacement using `string.Replace()`
@@ -122,7 +108,7 @@ File.WriteAllText(outputPath, result, new UTF8Encoding(false));
 
 ---
 
-## Why Embedding Matters (C# Only)
+## Why Embedding Matters
 
 The C# `.exe` is **self-contained** — it embeds the templates and doesn't need the `pbip-templates/` folder at runtime.
 
@@ -149,14 +135,14 @@ The tool only replaces known tokens. Unknown text is left alone.
 
 ---
 
-## If You Need to Modify the Structure
+## If You Need to Modify the Wrapper Structure
 
 1. Edit the file in `pbip-templates/`
 2. Update the documentation in `pbip-templates/REFERENCE.md`
-3. Both PowerShell and C# will pick up the change automatically:
-   - PowerShell: Reads from disk at runtime
-   - C#: Rebuild the project (embedded resources are baked in at build time)
+3. Rebuild the project — embedded resources are baked in at build time
 4. Update the internal test (`tests/internal_test.py`) if the structure changed
+
+This applies only to the wrapper files. The semantic model `definition/` folder is produced by TOM and is not editable via templates.
 
 See [Single Source of Truth](concepts.md#single-source-of-truth).
 

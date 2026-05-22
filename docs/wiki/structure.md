@@ -1,6 +1,6 @@
 ---
 title: Project Structure
-last-updated: 2026-05-21
+last-updated: 2026-05-22
 relates-to: [templates]
 tags: [reference]
 ---
@@ -16,7 +16,12 @@ The exact folder layout and files the tool produces.
   <DatasetName>.pbip                        ← Project entry point (open this)
   <DatasetName>.SemanticModel/
     definition.pbism                        ← Model item metadata
-    model.bim                               ← Your input model (copied verbatim)
+    definition/                             ← TMDL model (folder of .tmdl files)
+      database.tmdl
+      model.tmdl
+      tables/*.tmdl
+      relationships.tmdl
+      ...
   <DatasetName>.Report/
     definition.pbir                         ← Report item metadata & model binding
     report.json                             ← Blank report with one empty page
@@ -28,7 +33,11 @@ C:\PBIP\Sales\
   Sales.pbip
   Sales.SemanticModel/
     definition.pbism
-    model.bim
+    definition/
+      database.tmdl
+      model.tmdl
+      tables/Sales.tmdl
+      relationships.tmdl
   Sales.Report/
     definition.pbir
     report.json
@@ -85,22 +94,25 @@ Item properties for the semantic model folder.
 
 ---
 
-### `SemanticModel/model.bim`
+### `SemanticModel/definition/`
 
-The input Tabular model (TMSL JSON). Copied verbatim — no conversion, no changes.
+The Tabular model, written as TMDL (Tabular Model Definition Language) — a folder of `.tmdl` text files. There is **no** `model.bim` in the output.
 
-Example structure (simplified):
-```json
-{
-  "name": "Sales",
-  "defaultLanguage": "en-US",
-  "tables": [ ... ],
-  "relationships": [ ... ],
-  "roles": [ ... ]
-}
+Typical contents:
+```
+definition/
+  database.tmdl          ← database-level properties
+  model.tmdl             ← model-level properties, annotations, culture
+  relationships.tmdl     ← all relationships
+  tables/
+    Sales.tmdl           ← one file per table (columns, measures, partitions)
+    Date.tmdl
+    ...
 ```
 
-**Note**: This is your original `.bim` file. The tool doesn't parse or modify it — it's wrapped as-is in the PBIP structure.
+**How it is produced**: The tool loads your input `.bim` through the Tabular Object Model (TOM) library — which rebuilds a consistent metadata object graph — and serializes that graph to this folder with `TmdlSerializer.SerializeDatabaseToFolder`. The model is **normalized**, not copied verbatim. This is what makes the project safe to edit and refresh in Power BI Desktop.
+
+See [TOM normalization](concepts.md#tom-normalization) for why this matters.
 
 ---
 
@@ -183,7 +195,7 @@ See [Validation](validation.md) for how this is verified.
 
 ## Token Substitution
 
-The actual template files in `pbip-templates/` use placeholder tokens that get replaced at conversion time:
+The PBIP *wrapper* files come from template files in `pbip-templates/` that use placeholder tokens, replaced at conversion time:
 
 | Token | Replaced with |
 |-------|---|
@@ -191,15 +203,17 @@ The actual template files in `pbip-templates/` use placeholder tokens that get r
 | `{{SEMANTIC_MODEL_FOLDER}}` | `<DatasetName>.SemanticModel` |
 | `{{PAGE_NAME}}` | 20-character random hex ID |
 
+The `SemanticModel/definition/` folder is not a template — it is generated per-model by TOM.
+
 See [Templates](templates.md) for details.
 
 ---
 
 ## Single Source of Truth
 
-This structure is not invented in code. The files live in `pbip-templates/`, taken verbatim from a real Power BI Desktop export. Every field is documented in `pbip-templates/REFERENCE.md` with rationale and source.
+The wrapper structure is not invented in code. The four wrapper files live in `pbip-templates/`, taken verbatim from a real Power BI Desktop export. Every field is documented in `pbip-templates/REFERENCE.md` with rationale and source.
 
-Both PowerShell and C# tools read these templates and fill in the tokens.
+The tool reads these templates and fills in the tokens.
 
 ---
 

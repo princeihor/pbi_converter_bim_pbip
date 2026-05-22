@@ -1,6 +1,6 @@
 ---
 title: Validation & Error Checking
-last-updated: 2026-05-21
+last-updated: 2026-05-22
 relates-to: [concepts, troubleshooting]
 tags: [reference]
 ---
@@ -11,20 +11,17 @@ What the tool checks at each phase to ensure a working project.
 
 ## Three-Phase Pipeline
 
-The tool validates the input, assembly, and output to guarantee success or fail fast with a clear error.
+The tool runs load + normalize, assembly, and output validation to guarantee success or fail fast with a clear error.
 
-### Phase 1: Input Validation
+### Phase 1: Load + Normalize
 
-Before doing any work, verify the input is correct.
+Before assembling anything, verify the input and load it into a clean object graph.
 
 **Checks**:
 - ✅ Does `<bim-path>` exist?
-- ✅ Is it a file (not a directory)?
-- ✅ Can we read it?
-- ✅ Is it valid JSON?
-- ✅ Does it have a top-level object (TMSL requirement)?
+- ✅ Can the Tabular Object Model (TOM) deserialize the `.bim` into a valid Tabular model (`JsonSerializer.DeserializeDatabase`)?
 
-**Exit code on failure**: `2` (file not found) or `3` (invalid JSON/TMSL)
+TOM deserialization both validates the input and rebuilds a consistent metadata object graph. If the `.bim` is missing, exit code `2`. If TOM cannot load it as a valid Tabular model, exit code `3`.
 
 **Example**:
 ```
@@ -36,17 +33,15 @@ Before doing any work, verify the input is correct.
 
 ### Phase 2: Assembly
 
-Create the folder structure and write files (using UTF-8 without BOM).
+Serialize the normalized model and write all project files (using UTF-8 without BOM).
 
-**Checks during assembly**:
-- ✅ Can we create the output folder?
-- ✅ Can we copy the `.bim` file?
-- ✅ Can we write template files?
+**Steps**:
+- ✅ Serialize the TOM model to a TMDL `definition/` folder (`TmdlSerializer.SerializeDatabaseToFolder`)
+- ✅ Create the project folder structure
+- ✅ Write the wrapper metadata files (load templates, substitute tokens)
 - ✅ All template tokens replaced correctly?
 
-**Exit code on failure**: `5` (file system error)
-
-**Typical failures**: Permission denied, disk full, invalid path characters.
+**Exit codes on failure**: `3` if TOM cannot serialize the model to TMDL; `5` if files cannot be written (permission denied, disk full, invalid path characters).
 
 ---
 
@@ -55,13 +50,12 @@ Create the folder structure and write files (using UTF-8 without BOM).
 After assembly completes, verify the project is valid before reporting success.
 
 **Checks**:
-- ✅ All required files exist?
-- ✅ All files are valid JSON?
-- ✅ `<name>.pbip` has the correct schema (report artifact, no dataset)?
-- ✅ `definition.pbir` references the semantic model by relative path?
-- ✅ `report.json` has the required theme configuration?
+- ✅ A non-empty TMDL `definition/` folder exists, containing `.tmdl` files (including `model.tmdl`)?
+- ✅ All wrapper metadata files exist?
+- ✅ All metadata JSON files are valid JSON?
+- ✅ `<name>.pbip` has the correct schema (a `report` artifact, no `dataset`)?
+- ✅ `definition.pbir` references the semantic model by a relative, forward-slash path?
 - ✅ No files have a UTF-8 BOM?
-- ✅ Relative paths use forward slashes (not backslashes)?
 
 **Exit code on failure**: `4` (validation failed)
 
@@ -78,18 +72,30 @@ After assembly completes, verify the project is valid before reporting success.
 Power BI Desktop rejects files with a byte-order mark (UTF-8 BOM = bytes `0xEF 0xBB 0xBF`).
 
 **How we prevent it**:
-1. Use `UTF8Encoding(false)` / `[System.Text.UTF8Encoding]($false)` when writing files
+1. Use `UTF8Encoding(false)` when writing files
 2. After assembly, scan the entire project folder for any files with a leading BOM
-3. Strip it if found (a model.bim might already have one)
+3. Strip it if found
 
 **Validation check**:
 - ✅ No file in the project starts with `0xEF 0xBB 0xBF`
 
 ---
 
+## TMDL Model Validation
+
+The tool verifies the semantic model was written correctly:
+
+- ✅ The `SemanticModel/definition/` folder exists and is non-empty
+- ✅ It contains `.tmdl` files
+- ✅ `model.tmdl` is present
+
+The tool no longer validates a `model.bim` file — the model is now a TMDL `definition/` folder. See [Project Structure](structure.md).
+
+---
+
 ## JSON Schema Validation
 
-The tool verifies the structure matches Power BI Desktop's expectations.
+The tool verifies the wrapper metadata files match Power BI Desktop's expectations.
 
 ### project.pbip
 
@@ -123,23 +129,22 @@ Must have:
 
 ## Validation in the Internal Test
 
-The internal test (`tests/internal_test.py`) generates a complex model and validates it against the rules:
+The internal test (`tests/internal_test.py`) builds and runs the real C# converter via `dotnet run` and validates the produced TMDL project:
 
 ```python
 # Pseudocode
-model = create_test_model_with_7_tables_5_measures_relationships_etc()
-pbip_folder = convert(model)
-validate(pbip_folder)  # 50 checks covering:
+build_converter()                       # dotnet build (needs .NET 8 SDK)
+pbip_folder = run_converter(test_bim)   # dotnet run -- --bim <test.bim>
+validate(pbip_folder)  # checks covering:
   # - structure (folders, files exist)
-  # - no dataset artifact
-  # - report artifact present
-  # - correct relative paths
-  # - JSON validity
+  # - TMDL definition/ folder is non-empty, has model.tmdl
+  # - no dataset artifact, report artifact present
+  # - correct relative forward-slash paths
+  # - JSON validity of metadata files
   # - BOM absence
-  # - theme presence
 ```
 
-If all 50 checks pass, the tool is working correctly.
+See [Testing](testing.md) for details.
 
 ---
 
@@ -148,10 +153,10 @@ If all 50 checks pass, the tool is working correctly.
 | Error | Cause | Fix |
 |-------|-------|-----|
 | `BIM file not found` | Path typo or file deleted | Check the file path |
-| `BIM is not valid JSON` | Corrupted `.bim` file | Verify the file is valid TMSL |
-| `report.json missing theme` | Tool bug (shouldn't happen) | Report as a bug |
+| `Not a valid Tabular model` | `.bim` corrupted, or not a Tabular model TOM can load | Verify the file is a valid TMSL `.bim` |
+| `Could not serialize to TMDL` | TOM could not write the model as TMDL | Check the model for unsupported constructs; report as a bug if it persists |
+| `definition/ folder missing or empty` | Tool bug (shouldn't happen) | Report as a bug |
 | `Output folder not writable` | Permission denied | Check folder permissions |
-| `Relative path uses backslashes` | Tool bug (shouldn't happen) | Report as a bug |
 
 ---
 
@@ -163,5 +168,5 @@ See [CLI Reference](cli-reference.md#exit-codes) for the full list.
 
 ## Next Steps
 
-- [Troubleshooting](../troubleshooting.md) — what to do if validation fails
+- [Troubleshooting](troubleshooting.md) — what to do if validation fails
 - [Concepts](concepts.md#three-phase-pipeline) — architecture overview

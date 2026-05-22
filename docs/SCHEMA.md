@@ -32,19 +32,17 @@ Periodically health-check the wiki:
 ## Page Categories
 
 ### Architecture & Concepts
-- **Concepts** — core ideas (PBIP, TMSL, TMDL, tokens, UTF-8 BOM, three-phase pipeline)
+- **Concepts** — core ideas (PBIP, TMSL, TMDL, TOM normalization, tokens, UTF-8 BOM, three-phase pipeline)
 - **Structure** — the exact folder layout and file format (from pbip-templates/)
-- **Differences** — how the two implementations (PowerShell vs C#) differ
 
 ### User Guides
 - **Quick Start** — get running in 5 minutes
-- **Installation** — setup for PowerShell and C#/.NET
+- **Installation** — setup for the C#/.NET tool
 - **Command-line Reference** — all CLI parameters explained
 - **Troubleshooting** — common errors and fixes
 
 ### Implementation Details
-- **PowerShell Implementation** — code structure, functions, flow
-- **C# Implementation** — architecture, classes, validation
+- **Architecture** — the C# tool's design, classes, and pipeline
 - **Validation** — what the tool checks before reporting success
 - **Testing** — internal_test.py and what it validates
 

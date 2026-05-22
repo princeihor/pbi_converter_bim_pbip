@@ -1,6 +1,6 @@
 ---
 title: Glossary
-last-updated: 2026-05-21
+last-updated: 2026-05-22
 tags: [reference]
 ---
 
@@ -22,7 +22,7 @@ Byte-Order Mark. An invisible leading byte sequence (UTF-8: `0xEF 0xBB 0xBF`) th
 
 ## CLI
 
-Command-Line Interface. The PowerShell script and C# tool both support CLI mode (no GUI).
+Command-Line Interface. `BimToPbipCli.exe` runs in CLI mode when given `--bim`; with no `--bim` (or with `--ui`) it opens a browser-based UI instead.
 
 ## PBIP
 
@@ -42,15 +42,21 @@ A file path relative to a reference point (not absolute). Example: `../MyModel.S
 
 ## TMDL
 
-Tabular Model Definition Language. An alternative to TMSL: instead of a single `.bim` JSON file, a model is stored as a folder of `.tmdl` text files. Supported by Power BI Desktop but not yet by this tool.
+Tabular Model Definition Language. Instead of a single `.bim` JSON file, a model is stored as a `definition/` folder of `.tmdl` text files (`database.tmdl`, `model.tmdl`, `tables/*.tmdl`, `relationships.tmdl`, etc.). **This is the format this tool produces** — the converter writes the semantic model as a TMDL folder via TOM. There is no `model.bim` in the output.
 
 **See**: [TMDL](concepts.md#tmdl-tabular-model-definition-language)
 
 ## TMSL
 
-Tabular Model Scripting Language. A JSON format for describing Tabular models. A `.bim` file is TMSL.
+Tabular Model Scripting Language. A JSON format for describing Tabular models. A `.bim` file is TMSL. For this tool, TMSL is only the *input* format — the output is TMDL.
 
 **See**: [TMSL](concepts.md#tmsl-tabular-model-scripting-language), [TMDL](#tmdl)
+
+## TOM
+
+Tabular Object Model. The `Microsoft.AnalysisServices.Tabular` library used to read, build, and write Tabular models. This tool uses TOM to deserialize the input `.bim` (`JsonSerializer.DeserializeDatabase`) — which rebuilds a consistent metadata object graph — and to serialize the model to a TMDL folder (`TmdlSerializer.SerializeDatabaseToFolder`). TOM is bundled into the self-contained `.exe`.
+
+**See**: [TOM normalization](concepts.md#tom-normalization)
 
 ## Token
 

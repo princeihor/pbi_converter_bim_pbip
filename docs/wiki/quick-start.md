@@ -1,76 +1,65 @@
 ---
 title: Quick Start
-last-updated: 2026-05-21
+last-updated: 2026-05-22
 tags: [guide, getting-started]
 ---
 
 # Quick Start — 5 Minutes
 
-## PowerShell (Easiest)
+The tool ships as a single self-contained Windows `.exe`: `BimToPbipCli.exe`.
 
-**Requirements**: Windows PowerShell 5.1+ (built in). No install, no admin rights.
+## Get the Tool
 
-1. Download the `powershell/` folder from the repository.
-2. **Double-click `powershell/BimToPbip.cmd`**
-3. A small GUI window opens
-4. **Browse…** → select your `model.bim`
-5. (Optional) Set output folder and project name
-6. **Convert**
-7. On success, the output folder opens. Find `MyModel.pbip` and double-click it to open in Power BI Desktop
+**Easiest** — download the pre-built `.exe`:
+- Go to the GitHub Actions [build workflow](../../.github/workflows/build.yml)
+- Open the latest successful run and download the `BimToPbipCli-win-x64` artifact
+- Extract `BimToPbipCli.exe`
+
+**Or build it yourself** (needs the .NET 8 SDK):
+```
+dotnet publish BimToPbipCli -c Release -r win-x64 --self-contained true ^
+    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+```
+
+See [Installation](installation.md) for details.
+
+---
+
+## Browser UI (Easiest)
+
+1. Run `BimToPbipCli.exe` with no arguments (or `--ui`)
+2. A browser-based UI opens
+3. Select your `model.bim`
+4. (Optional) Set the output folder and project name
+5. Convert
+6. Find `MyModel.pbip` in the output folder and double-click it to open in Power BI Desktop
 
 **Done.** Your model loads and you get a blank report.
 
 ---
 
-## PowerShell (Command-line)
+## Command Line
 
 For scripting or CI:
 
-```powershell
-.\bim-to-pbip.ps1 -BimPath "C:\Models\MyModel.bim"
+```
+BimToPbipCli.exe --bim C:\Models\MyModel.bim
 ```
 
 Optional parameters:
 
-```powershell
-.\bim-to-pbip.ps1 `
-    -BimPath "C:\Models\MyModel.bim" `
-    -OutputRoot "C:\PBIP" `
-    -DatasetName "MyModel"
+```
+BimToPbipCli.exe --bim C:\Models\MyModel.bim --out C:\PBIP --dataset MyModel
 ```
 
-| Parameter | Default | Notes |
-|-----------|---------|-------|
-| `-BimPath` | (required) | Path to input `.bim` file |
-| `-OutputRoot` | Folder next to `.bim` | Where to create the project |
-| `-DatasetName` | `.bim` file name | Project folder names use this (e.g., `MyModel.SemanticModel`) |
+| Option | Default | Notes |
+|--------|---------|-------|
+| `--bim` | (required) | Path to the input `.bim` file |
+| `--out` | Folder next to the `.bim` | Where to create the project |
+| `--dataset` | `.bim` file name | Project folder names use this (e.g., `MyModel.SemanticModel`) |
+| `--ui` | (off) | Open the browser UI instead of running headless |
 
----
-
-## C# (If You Have .NET 8)
-
-**Requirements**: .NET 8 SDK installed, or download the pre-built Windows `.exe`.
-
-**Download pre-built .exe**:
-- Go to the GitHub Actions [build workflow](../../.github/workflows/build.yml)
-- Download the latest `BimToPbipCli-win-x64` artifact
-- Run it with no arguments for the browser UI, or use CLI
-
-**Build yourself**:
-
-```powershell
-dotnet build BimToPbipCli -c Release
-dotnet publish BimToPbipCli -c Release -r win-x64 --self-contained true `
-    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
-```
-
-**Run**:
-
-```
-BimToPbipCli.exe                                    # Browser UI
-BimToPbipCli.exe --bim C:\Models\MyModel.bim       # CLI
-BimToPbipCli.exe --help                             # All options
-```
+See [CLI Reference](cli-reference.md) for everything.
 
 ---
 
@@ -78,10 +67,10 @@ BimToPbipCli.exe --help                             # All options
 
 The tool:
 
-1. **Validates** your `.bim` is valid TMSL JSON
-2. **Creates** the output folder with subfolders for the semantic model and report
-3. **Copies** your `.bim` into the semantic model folder
-4. **Writes** the metadata files (`definition.pbism`, `definition.pbir`, `report.json`)
+1. **Loads + normalizes** your `.bim` through the Tabular Object Model (TOM), which rebuilds a consistent metadata object graph
+2. **Serializes** the model to a TMDL `definition/` folder (a folder of `.tmdl` text files — no `model.bim`)
+3. **Creates** the project folder with subfolders for the semantic model and the report
+4. **Writes** the wrapper metadata files (`project.pbip`, `definition.pbism`, `definition.pbir`, `report.json`)
 5. **Validates** the complete project against Power BI Desktop's schema
 6. **Strips** any UTF-8 byte-order marks from all files
 7. Reports success or an error code
@@ -94,4 +83,4 @@ See [Exit Codes](cli-reference.md#exit-codes) if something fails.
 
 - [Installation](installation.md) — detailed setup
 - [CLI Reference](cli-reference.md) — all parameters and exit codes
-- [Troubleshooting](../troubleshooting.md) — if something goes wrong
+- [Troubleshooting](troubleshooting.md) — if something goes wrong

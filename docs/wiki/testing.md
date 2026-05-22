@@ -1,6 +1,6 @@
 ---
 title: Testing
-last-updated: 2026-05-21
+last-updated: 2026-05-22
 relates-to: [validation, architecture]
 tags: [reference, implementation]
 ---
@@ -15,25 +15,29 @@ The primary test suite. Runs in CI before building the Windows `.exe`.
 
 ### What It Does
 
-1. **Builds a complex test model** with:
-   - 7 tables with various data types
-   - 5 measures
+The test exercises the **real C# converter** — it does not re-implement the conversion in Python.
+
+1. **Builds the converter** with `dotnet build` (so it needs the .NET 8 SDK)
+
+2. **Runs the real converter** via `dotnet run` against a deliberately complex test model with:
+   - Multiple tables with various data types
+   - Measures
    - Relationships between tables
    - Row-level security (RLS) roles
    - Perspectives
    - Multiple cultures (translations)
 
-2. **Converts the test model** using the same logic as the shipped tools
-
-3. **Validates the output** with 50 regression checks covering:
+3. **Validates the produced TMDL project** with regression checks covering:
    - ✅ Folder structure (all required folders exist)
+   - ✅ The semantic model `definition/` folder is present, non-empty, and contains `.tmdl` files including `model.tmdl`
    - ✅ No `dataset` artifact (Power BI Desktop rejects this)
    - ✅ `report` artifact declared and correct
-   - ✅ Relative paths in `definition.pbir`
-   - ✅ All JSON files parse correctly
+   - ✅ Relative, forward-slash paths in `definition.pbir`
+   - ✅ All metadata JSON files parse correctly
    - ✅ No UTF-8 BOM in any file
-   - ✅ Theme configuration present in `report.json`
    - ✅ Token substitution worked (page ID is 20 hex chars, folders named correctly)
+
+The test does **not** assert a byte-identical `model.bim` — there is no `model.bim` anymore. The model is normalized through TOM and written as TMDL, so the output is intentionally not byte-identical to the input.
 
 ### Running It Locally
 
@@ -41,72 +45,51 @@ The primary test suite. Runs in CI before building the Windows `.exe`.
 python3 tests/internal_test.py
 ```
 
-**Output** (on success):
-```
-[ OK ] 50/50 checks passed
-[ OK ] PBIP project is valid and ready for Power BI Desktop
-```
+The test needs the **.NET 8 SDK** on PATH, because it builds and runs the real converter.
 
 **Exit code**: `0` if all checks pass; non-zero if any fail.
 
 ### Running in CI
 
-The GitHub Actions workflow (`.github/workflows/build.yml`) runs the internal test on every push to the main branch. If the test fails, the Windows `.exe` is not built.
+The GitHub Actions workflow (`.github/workflows/build.yml`) `test` job:
+1. Sets up the .NET 8 SDK
+2. Builds the converter
+3. Runs `tests/internal_test.py`
+
+If the test fails, the Windows `.exe` is not built. (The old "Check PowerShell scripts parse" step has been removed — there are no PowerShell scripts.)
 
 ---
 
 ## Test Coverage
 
-The 50 checks are grouped by concern:
+The checks are grouped by concern:
 
-### Structure (5 checks)
+### Structure
 - Project root folder exists
 - Semantic model folder (`<name>.SemanticModel`) exists
 - Report folder (`<name>.Report`) exists
-- `.bim` file copied to semantic model folder
+- `SemanticModel/definition/` folder exists, is non-empty, contains `.tmdl` files
+- `model.tmdl` is present in the `definition/` folder
 - Report folder contains `report.json`
 
-### JSON Validity (10 checks)
-- `project.pbip` is valid JSON
-- `definition.pbism` is valid JSON
-- `definition.pbir` is valid JSON
-- `report.json` is valid JSON
-- Each JSON file can be parsed without errors
+### JSON Validity
+- `project.pbip`, `definition.pbism`, `definition.pbir`, `report.json` are all valid JSON
 
-### Schema Validation (10 checks)
-- `project.pbip` has `artifacts` array
+### Schema Validation
+- `project.pbip` has an `artifacts` array
 - `artifacts[0]` is a `report` (not `dataset`)
-- Report path is non-empty
 - `definition.pbir` has `datasetReference.byPath.path`
-- Path points to semantic model folder
-- Path is relative (no absolute path)
-- Path uses forward slashes
-- Theme is configured in `report.json`
-- Page array has at least one page
+- Path points to the semantic model folder, is relative, uses forward slashes
+- `report.json` page array has at least one page
 - Page ID is 20 hex characters
 
-### Encoding (5 checks)
+### Encoding
 - No file in the project has a UTF-8 BOM
-- All text files are encoded as UTF-8
 
-### Token Substitution (5 checks)
-- `{{REPORT_FOLDER}}` replaced with actual folder name
-- `{{SEMANTIC_MODEL_FOLDER}}` replaced with actual folder name
-- `{{PAGE_NAME}}` replaced with valid 20-hex ID
+### Token Substitution
+- `{{REPORT_FOLDER}}`, `{{SEMANTIC_MODEL_FOLDER}}`, `{{PAGE_NAME}}` are all replaced
 - No unsubstituted tokens remain
 - Folder names match the dataset name
-
-### Model Integrity (5 checks)
-- `.bim` file contents match the input (verbatim copy)
-- Model is still valid TMSL
-- Model still contains the expected tables, measures, relationships
-
-### Regression Checks (5 checks)
-- Dataset artifact is not generated (historical failure case)
-- UTF-8 BOM is not present (historical failure case)
-- Theme crash is prevented (historical failure case)
-- Relative paths are correct
-- Project opens without schema errors
 
 ---
 
@@ -114,33 +97,9 @@ The 50 checks are grouped by concern:
 
 Each check validates something Power BI Desktop requires or a historical bug the project has hit:
 
-- **Historical bug #1**: Tool generated `dataset` artifact instead of `report` — Power BI Desktop rejected it
-- **Historical bug #2**: Files written with UTF-8 BOM — Power BI Desktop rejected it
-- **Historical bug #3**: Theme configuration missing — Power BI Desktop crashed on open
-- **Modern checks**: Token substitution, relative paths, JSON validity, folder structure
-
----
-
-## Adding New Checks
-
-If you find a bug, add a regression check to prevent it happening again:
-
-1. Add a check to `tests/internal_test.py` in the `validate()` function
-2. Run the test locally: `python3 tests/internal_test.py`
-3. Update `log.md` to document the new check
-4. Commit with message like: "Add regression check for <issue>"
-
-Example check:
-```python
-# In the validate() function
-def validate(pbip_folder):
-    # ... existing checks ...
-    
-    # New check: verify config.version in report.json
-    config_version = parsed_config.get("version")
-    assert config_version == "5.59", f"report.json config version should be 5.59, got {config_version}"
-    checks_passed += 1
-```
+- **Historical bug #1**: Tool generated a `dataset` artifact instead of `report` — Desktop rejected it
+- **Historical bug #2**: Files written with a UTF-8 BOM — Desktop rejected it
+- **Historical bug #3**: Verbatim `model.bim` copy — Desktop failed on edit/refresh with *"Model object-map is not consistent with the metadata-object graph"*. Fixed by normalizing through TOM and writing TMDL.
 
 ---
 
@@ -154,6 +113,7 @@ For manual verification in Power BI Desktop:
    - Model tables are visible in the Data pane
    - Relationships are intact
    - Measures are present
+   - You can edit the model and refresh without the object-map error
    - You can create a new page and add a visual
 
 ---
