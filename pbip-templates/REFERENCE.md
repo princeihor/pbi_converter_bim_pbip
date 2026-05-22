@@ -1,23 +1,41 @@
 # PBIP templates — single source of truth
 
-These four files are the **only** place the PBIP project structure is defined.
-The PowerShell tool (`powershell/bim-to-pbip.ps1`), the C# tool
-(`BimToPbipCli`) and the internal test (`tests/internal_test.py`) all consume
-**these exact files**. Nothing about the PBIP structure is invented anywhere
-else — if a field has to change, it changes here.
+These four files are the **only** place the PBIP *wrapper* structure is
+defined. The C# tool (`BimToPbipCli`) and the internal test
+(`tests/internal_test.py`) both consume **these exact files**. Nothing about
+the wrapper structure is invented anywhere else — if a field has to change, it
+changes here.
+
+The semantic model itself is **not** a template. It is produced at conversion
+time by the Tabular Object Model (TOM): the converter deserializes the input
+`.bim` and re-serializes it as TMDL into the `<name>.SemanticModel/definition/`
+folder. See *The semantic model* below.
 
 JSON files cannot carry comments, so every field is documented below, with the
 reason it exists and the authoritative source it was taken from.
 
 ## Source of truth
 
-The structure is taken verbatim from a real Power BI Desktop "Save as PBIP"
-export — the `02_pbip_tmsl` ("PBIP with TMSL") layout — cross-checked against
-Microsoft Learn, *Power BI Desktop projects (PBIP)*:
+The structure is taken from a real Power BI Desktop "Save as PBIP" export,
+cross-checked against Microsoft Learn, *Power BI Desktop projects (PBIP)*:
 <https://learn.microsoft.com/power-bi/developer/projects/projects-overview>
 
-The TMSL layout stores the model directly as `model.bim` (a `.bim` *is* TMSL
-JSON), so no model conversion / `pbi-tools` is required.
+## The semantic model
+
+The model is **never copied verbatim**. A raw `.bim` carries server-specific
+metadata and inconsistencies that, copied straight into a project, make Power
+BI Desktop fail on edit/refresh with *"Model object-map is not consistent with
+the metadata-object graph"*. Instead the converter:
+
+1. Deserializes the `.bim` with `TOM.JsonSerializer.DeserializeDatabase` — this
+   rebuilds a consistent in-memory metadata object graph (and rejects a
+   malformed model with a precise error).
+2. Re-serializes that graph with `TOM.TmdlSerializer.SerializeDatabaseToFolder`
+   into `<name>.SemanticModel/definition/`.
+
+TMDL is the modern PBIP semantic-model layout (Microsoft Learn: *"the existing
+TMSL file (model.bim) is replaced with a `\definition` folder"*). TOM is the
+same library Power BI Desktop uses, so the result is metadata Desktop accepts.
 
 ## Produced layout
 
@@ -26,7 +44,8 @@ JSON), so no model conversion / `pbi-tools` is required.
   <name>.pbip                       <- project.pbip
   <name>.SemanticModel/
     definition.pbism                <- SemanticModel/definition.pbism
-    model.bim                       <- the input .bim, copied verbatim
+    definition/                     <- TMDL written by TOM (database.tmdl,
+                                       model.tmdl, tables/*.tmdl, ...)
   <name>.Report/
     definition.pbir                 <- Report/definition.pbir
     report.json                     <- Report/report.json
@@ -59,11 +78,11 @@ The project entry point that Power BI Desktop opens.
 ## `SemanticModel/definition.pbism`
 
 Item-properties file for the semantic model. Marks the folder as a PBIP
-semantic model item; Power BI Desktop auto-detects whether the model is stored
-as `model.bim` (TMSL) or `definition/` (TMDL) by what is present in the folder.
+semantic model item; Power BI Desktop detects the TMDL model from the
+`definition/` folder that the converter writes alongside this file.
 
 - `version` `"4.1"` — semantic-model item schema version from the reference
-  TMSL export.
+  export.
 - `settings` `{}` — no overrides; required by the schema, empty is valid.
 
 ## `Report/definition.pbir`

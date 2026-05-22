@@ -1,8 +1,9 @@
 name: build-windows-exe
 
-# Runs the internal conversion test, checks the PowerShell scripts parse, then
-# builds a standalone, self-contained Windows executable and uploads it as a
-# downloadable artifact. No .NET installation is needed to run the .exe.
+# Builds the converter, runs the internal end-to-end conversion test against the
+# real built tool, then builds a standalone, self-contained Windows executable
+# and uploads it as a downloadable artifact. No .NET installation is needed to
+# run the published .exe.
 
 on:
   push:
@@ -17,24 +18,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build the converter
+        run: dotnet build BimToPbipCli -c Release
+
       - name: Run internal conversion test
         run: python tests/internal_test.py
-
-      - name: Check PowerShell scripts parse
-        shell: pwsh
-        run: |
-          $failed = $false
-          foreach ($script in 'powershell/bim-to-pbip.ps1', 'powershell/Fix-PbipBom.ps1') {
-              $errors = $null
-              [System.Management.Automation.Language.Parser]::ParseFile(
-                  $script, [ref]$null, [ref]$errors) | Out-Null
-              if ($errors) {
-                  $failed = $true
-                  $errors | ForEach-Object { Write-Error "$script : $_" }
-              }
-              else { Write-Host "OK  $script" }
-          }
-          if ($failed) { exit 1 }
 
   publish:
     needs: test

@@ -1,18 +1,25 @@
 using System.Text;
 using System.Text.Json;
+using Tom = Microsoft.AnalysisServices.Tabular;
 
 namespace BimToPbipCli;
 
 /// <summary>
 /// Converts a Tabular model.bim into a Power BI Desktop project (PBIP).
 ///
-/// A .bim file IS TMSL JSON, so it is stored directly as the semantic model's
-/// model.bim — the "PBIP with TMSL" layout that Power BI Desktop itself uses.
-/// No model conversion / pbi-tools, no network access is needed. The PBIP file
-/// structure comes entirely from the embedded templates (see
-/// <see cref="PbipTemplates"/> and pbip-templates/REFERENCE.md).
+/// The input .bim is never copied verbatim. It is deserialized through the
+/// Tabular Object Model (TOM) and re-serialized as TMDL into the semantic
+/// model's <c>definition/</c> folder — the modern PBIP layout that Power BI
+/// Desktop itself uses. The TOM round-trip rebuilds a consistent metadata
+/// object graph, which is what prevents Desktop's "Model object-map is not
+/// consistent with the metadata-object graph" failure on edit/refresh.
 ///
-/// Pipeline: validate input -> assemble project -> validate output.
+/// The PBIP wrapper files (.pbip, definition.pbism, definition.pbir,
+/// report.json) come from the embedded templates (see <see cref="PbipTemplates"/>
+/// and pbip-templates/REFERENCE.md). TOM is bundled into the self-contained
+/// .exe, so no separate install and no network access is needed.
+///
+/// Pipeline: load + normalize model -> assemble project -> validate output.
 /// Every failure surfaces as a <see cref="ConversionException"/> with an
 /// explicit <see cref="ExitCode"/> — there are no silent failures.
 /// </summary>
@@ -30,12 +37,12 @@ public sealed class ConversionService
         try
         {
             var bimPath = resolveBimPath(options);
-            validateBim(bimPath);
+            var database = loadModel(bimPath);
 
             var datasetName = resolveDatasetName(options, bimPath);
             var outputRoot = resolveOutputRoot(options, bimPath, datasetName);
 
-            assemblePbipProject(bimPath, outputRoot, datasetName);
+            assemblePbipProject(database, outputRoot, datasetName);
             validatePbipProject(outputRoot, datasetName);
 
             printSummary(outputRoot, datasetName);
@@ -59,7 +66,7 @@ public sealed class ConversionService
         }
     }
 
-    // ----- Step 1: input validation -------------------------------------------------------
+    // ----- Step 1: load and normalize the input model -------------------------------------
 
     private string resolveBimPath(CliOptions options)
     {
@@ -82,13 +89,14 @@ public sealed class ConversionService
     }
 
     /// <summary>
-    /// Confirms the input .bim parses as a JSON object (TMSL). A missing
-    /// top-level 'model' member is only a warning so an unusual but valid
-    /// complex model is never blocked.
+    /// Reads the input .bim and deserializes it through TOM. This is the
+    /// authoritative validation: TOM rejects a malformed model with a precise
+    /// message, and the resulting <see cref="Tom.Database"/> is a consistent
+    /// object graph ready to be re-serialized as TMDL.
     /// </summary>
-    private void validateBim(string bimPath)
+    private Tom.Database loadModel(string bimPath)
     {
-        _log.Step("Validating input model...");
+        _log.Step("Loading and normalizing the input model (TOM)...");
 
         string text;
         try
@@ -105,27 +113,27 @@ public sealed class ConversionService
             throw new ConversionException(ExitCode.BimInvalid, $"Input .bim file is empty: {bimPath}");
         }
 
+        Tom.Database database;
         try
         {
-            using var doc = JsonDocument.Parse(text);
-            if (doc.RootElement.ValueKind != JsonValueKind.Object)
-            {
-                throw new ConversionException(ExitCode.BimInvalid,
-                    $"Input .bim must be a JSON object (TMSL model): {bimPath}");
-            }
-
-            if (!doc.RootElement.TryGetProperty("model", out _))
-            {
-                _log.Warn("Input .bim has no top-level 'model' member — copying it anyway.");
-            }
+            database = Tom.JsonSerializer.DeserializeDatabase(text);
         }
-        catch (JsonException ex)
+        catch (Exception ex)
         {
             throw new ConversionException(ExitCode.BimInvalid,
-                $"Input .bim is not valid JSON ({bimPath}): {ex.Message}", ex);
+                $"Input .bim is not a valid Tabular model ({bimPath}): {ex.Message}", ex);
+        }
+
+        if (database.Model is null)
+        {
+            throw new ConversionException(ExitCode.BimInvalid,
+                $"Input .bim has no model definition: {bimPath}");
         }
 
         _log.Info($"Input model:   {bimPath}");
+        _log.Info($"Model:         {database.Name} (compatibility level {database.CompatibilityLevel}, "
+            + $"{database.Model.Tables.Count} table(s))");
+        return database;
     }
 
     private string resolveDatasetName(CliOptions options, string bimPath)
@@ -166,14 +174,15 @@ public sealed class ConversionService
 
     // ----- Step 2: assemble PBIP project --------------------------------------------------
 
-    private void assemblePbipProject(string bimPath, string outputRoot, string datasetName)
+    private void assemblePbipProject(Tom.Database database, string outputRoot, string datasetName)
     {
-        _log.Step("Assembling PBIP project (TMSL layout)...");
+        _log.Step("Assembling PBIP project (TMDL layout)...");
 
         var smFolder = PbipTemplates.SemanticModelFolderName(datasetName);
         var reportFolder = PbipTemplates.ReportFolderName(datasetName);
         var smDir = Path.Combine(outputRoot, smFolder);
         var reportDir = Path.Combine(outputRoot, reportFolder);
+        var definitionDir = Path.Combine(smDir, "definition");
 
         try
         {
@@ -181,9 +190,9 @@ public sealed class ConversionService
             Directory.CreateDirectory(smDir);
             Directory.CreateDirectory(reportDir);
 
-            // The .bim IS the TMSL model -> store it verbatim as model.bim,
-            // re-encoded as UTF-8 without a BOM.
-            File.WriteAllText(Path.Combine(smDir, "model.bim"), File.ReadAllText(bimPath), Utf8NoBom);
+            // Re-serialize the normalized model as TMDL into the definition/
+            // folder. TOM writes database.tmdl, model.tmdl, tables/*.tmdl, etc.
+            serializeModelToTmdl(database, definitionDir);
 
             File.WriteAllText(
                 Path.Combine(outputRoot, datasetName + ".pbip"),
@@ -201,6 +210,10 @@ public sealed class ConversionService
             // Belt-and-braces: strip a UTF-8 BOM from every file in the project.
             stripBomFromTree(outputRoot);
         }
+        catch (ConversionException)
+        {
+            throw;
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             throw new ConversionException(
@@ -210,6 +223,31 @@ public sealed class ConversionService
         }
 
         _log.Success("PBIP structure assembled.");
+    }
+
+    /// <summary>
+    /// Serializes the TOM model to a TMDL <c>definition/</c> folder. A failure
+    /// here means TOM could not turn the model into valid TMDL — the model
+    /// itself is the problem, so it surfaces as an invalid-model error.
+    /// </summary>
+    private void serializeModelToTmdl(Tom.Database database, string definitionDir)
+    {
+        if (Directory.Exists(definitionDir))
+        {
+            Directory.Delete(definitionDir, recursive: true);
+        }
+
+        try
+        {
+            Tom.TmdlSerializer.SerializeDatabaseToFolder(database, definitionDir);
+        }
+        catch (Exception ex)
+        {
+            throw new ConversionException(ExitCode.BimInvalid,
+                $"The model could not be serialized to TMDL: {ex.Message}", ex);
+        }
+
+        _log.Info($"Semantic model written as TMDL: {definitionDir}");
     }
 
     /// <summary>Removes a leading UTF-8 BOM (EF BB BF) from every file under <paramref name="root"/>.</summary>
@@ -249,19 +287,40 @@ public sealed class ConversionService
         var reportFolder = PbipTemplates.ReportFolderName(datasetName);
         var smDir = Path.Combine(outputRoot, smFolder);
         var reportDir = Path.Combine(outputRoot, reportFolder);
+        var definitionDir = Path.Combine(smDir, "definition");
 
         var pbipPath = Path.Combine(outputRoot, datasetName + ".pbip");
         var pbirPath = Path.Combine(reportDir, "definition.pbir");
         var reportJsonPath = Path.Combine(reportDir, "report.json");
         var pbismPath = Path.Combine(smDir, "definition.pbism");
-        var modelPath = Path.Combine(smDir, "model.bim");
 
-        foreach (var p in new[] { pbipPath, pbirPath, reportJsonPath, pbismPath, modelPath })
+        foreach (var p in new[] { pbipPath, pbirPath, reportJsonPath, pbismPath })
         {
             if (!File.Exists(p))
             {
                 throw new ConversionException(ExitCode.ValidationFailed, $"PBIP validation failed: missing '{p}'.");
             }
+        }
+
+        // The semantic model must be a non-empty TMDL definition/ folder.
+        if (!Directory.Exists(definitionDir))
+        {
+            throw new ConversionException(ExitCode.ValidationFailed,
+                $"PBIP validation failed: missing TMDL folder '{definitionDir}'.");
+        }
+
+        var tmdlFiles = Directory.GetFiles(definitionDir, "*.tmdl", SearchOption.AllDirectories);
+        if (tmdlFiles.Length == 0)
+        {
+            throw new ConversionException(ExitCode.ValidationFailed,
+                $"PBIP validation failed: TMDL folder '{definitionDir}' contains no .tmdl files.");
+        }
+
+        var modelTmdl = Path.Combine(definitionDir, "model.tmdl");
+        if (!File.Exists(modelTmdl))
+        {
+            throw new ConversionException(ExitCode.ValidationFailed,
+                $"PBIP validation failed: TMDL folder '{definitionDir}' has no model.tmdl.");
         }
 
         // .pbip : exactly a 'report' artifact pointing at the report folder,
@@ -320,9 +379,8 @@ public sealed class ConversionService
             }
         }
 
-        // definition.pbism and model.bim : must parse as JSON.
+        // definition.pbism : must parse as JSON.
         parseJson(pbismPath).Dispose();
-        parseJson(modelPath).Dispose();
 
         // No file in the project may carry a UTF-8 BOM.
         foreach (var file in Directory.EnumerateFiles(outputRoot, "*", SearchOption.AllDirectories))
@@ -362,7 +420,7 @@ public sealed class ConversionService
         _log.Success("Conversion complete.");
         _log.Detail($"  PBIP project root : {outputRoot}");
         _log.Detail($"  Open in Power BI  : {Path.Combine(outputRoot, datasetName + ".pbip")}");
-        _log.Detail($"  Semantic model    : {smDir}");
+        _log.Detail($"  Semantic model    : {Path.Combine(smDir, "definition")} (TMDL)");
         _log.Detail($"  Report            : {reportDir}");
         _log.Detail(string.Empty);
         _log.Detail("  Double-click the .pbip file to open it in Power BI Desktop.");

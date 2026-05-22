@@ -4,36 +4,33 @@
 What this proves
 ----------------
 * A *complex* model.bim (many tables, measures, relationships, roles,
-  perspectives, cultures) is converted into a PBIP project.
+  perspectives, cultures) is converted into a PBIP project by the *real*
+  built C# tool (BimToPbipCli).
+* The model is normalized through TOM and emitted as a TMDL ``definition/``
+  folder — the modern PBIP layout — never copied verbatim as ``model.bim``.
 * The produced project has the exact structure Power BI Desktop requires --
   the same rules whose violation produced the real "Cannot read .pbip" errors
-  (BOM, and `artifacts[].dataset` instead of `artifacts[].report`).
+  (BOM, and ``artifacts[].dataset`` instead of ``artifacts[].report``).
 
 How it stays honest
 -------------------
-The PBIP structure is NOT redefined here. The test reads the *same*
-`pbip-templates/` folder that the shipped tools (`powershell/bim-to-pbip.ps1`
-and `BimToPbipCli`) read, and applies the *same* assembly recipe (copy the
-.bim as model.bim, write four token-substituted metadata files). It also
-greps the PowerShell tool to confirm it uses those same templates and tokens,
-so the test and the tool cannot silently drift apart.
-
-This container has only Python, so the PowerShell/C# tools and Power BI
-Desktop cannot be launched here; this test validates the structure/contract
-they all share. Run:  python3 tests/internal_test.py
+The test does NOT re-implement the conversion. It builds and runs the shipped
+``BimToPbipCli`` tool via ``dotnet`` and validates whatever that tool produced.
+The conversion now requires the Tabular Object Model (TOM), so a .NET 8 SDK
+must be available. Run:  python3 tests/internal_test.py
 """
 
 from __future__ import annotations
 
 import json
-import re
-import secrets
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 TEMPLATES = REPO / "pbip-templates"
+CLI_PROJECT = REPO / "BimToPbipCli"
 
 PASSED: list[str] = []
 
@@ -229,41 +226,27 @@ def build_complex_bim() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Conversion recipe -- the same steps the shipped tools perform
+# Run the real shipped converter
 # ---------------------------------------------------------------------------
 
-def convert(bim_path: Path, out_root: Path, name: str) -> None:
-    report_folder = f"{name}.Report"
-    sm_folder = f"{name}.SemanticModel"
-    report_dir = out_root / report_folder
-    sm_dir = out_root / sm_folder
-    out_root.mkdir(parents=True, exist_ok=True)
-    report_dir.mkdir(parents=True, exist_ok=True)
-    sm_dir.mkdir(parents=True, exist_ok=True)
-
-    # The .bim IS the TMSL model -> stored verbatim as model.bim.
-    # encoding="utf-8" (not utf-8-sig) guarantees no BOM is written.
-    (sm_dir / "model.bim").write_text(
-        bim_path.read_text(encoding="utf-8"), encoding="utf-8")
-
-    pbip = (TEMPLATES / "project.pbip").read_text(encoding="utf-8")
-    (out_root / f"{name}.pbip").write_text(
-        pbip.replace("{{REPORT_FOLDER}}", report_folder), encoding="utf-8")
-
-    pbism = (TEMPLATES / "SemanticModel" / "definition.pbism").read_text(encoding="utf-8")
-    (sm_dir / "definition.pbism").write_text(pbism, encoding="utf-8")
-
-    pbir = (TEMPLATES / "Report" / "definition.pbir").read_text(encoding="utf-8")
-    (report_dir / "definition.pbir").write_text(
-        pbir.replace("{{SEMANTIC_MODEL_FOLDER}}", sm_folder), encoding="utf-8")
-
-    report = (TEMPLATES / "Report" / "report.json").read_text(encoding="utf-8")
-    (report_dir / "report.json").write_text(
-        report.replace("{{PAGE_NAME}}", secrets.token_hex(10)), encoding="utf-8")
+def run_converter(bim_path: Path, out_root: Path, name: str) -> None:
+    """Invokes the shipped BimToPbipCli tool via ``dotnet run``."""
+    cmd = [
+        "dotnet", "run", "--project", str(CLI_PROJECT), "-c", "Release", "--",
+        "--bim", str(bim_path), "--out", str(out_root), "--dataset", name,
+    ]
+    print(f"  > {' '.join(cmd)}")
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.stdout:
+        print(proc.stdout)
+    if proc.returncode != 0:
+        if proc.stderr:
+            print(proc.stderr)
+        fail(f"converter exited with code {proc.returncode}")
 
 
 # ---------------------------------------------------------------------------
-# Validation -- mirrors Test-PbipStructure in bim-to-pbip.ps1
+# Validation -- mirrors ConversionService.validatePbipProject
 # ---------------------------------------------------------------------------
 
 def _load_json(path: Path) -> object:
@@ -278,6 +261,7 @@ def validate(out_root: Path, name: str) -> None:
     pbip_path = out_root / f"{name}.pbip"
     report_dir = out_root / report_folder
     sm_dir = out_root / sm_folder
+    definition_dir = sm_dir / "definition"
 
     required = {
         "<name>.pbip": pbip_path,
@@ -286,10 +270,17 @@ def validate(out_root: Path, name: str) -> None:
         "definition.pbir": report_dir / "definition.pbir",
         "report.json": report_dir / "report.json",
         "definition.pbism": sm_dir / "definition.pbism",
-        "model.bim": sm_dir / "model.bim",
+        "definition/ (TMDL folder)": definition_dir,
     }
     for label, path in required.items():
         check(path.exists(), f"exists: {label}")
+
+    # The semantic model is a TMDL definition/ folder, never a verbatim model.bim.
+    check(not (sm_dir / "model.bim").exists(),
+          "no verbatim model.bim (model is normalized to TMDL)")
+    tmdl_files = list(definition_dir.rglob("*.tmdl"))
+    check(len(tmdl_files) >= 1, f"definition/ has .tmdl files ({len(tmdl_files)} found)")
+    check((definition_dir / "model.tmdl").exists(), "definition/model.tmdl exists")
 
     # .pbip : exactly a 'report' artifact, never a 'dataset' artifact.
     pbip = _load_json(pbip_path)
@@ -329,11 +320,6 @@ def validate(out_root: Path, name: str) -> None:
     # definition.pbism : parses.
     _load_json(sm_dir / "definition.pbism")
 
-    # model.bim : parses, is the complex model, byte-identical to the input.
-    model = _load_json(sm_dir / "model.bim")
-    check("model" in model, "model.bim has a 'model' member")
-    check(len(model["model"]["tables"]) == 7, "model.bim kept all 7 tables")
-
     # No file anywhere in the project may carry a UTF-8 BOM.
     for f in out_root.rglob("*"):
         if f.is_file():
@@ -342,35 +328,31 @@ def validate(out_root: Path, name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Consistency: the shipped PowerShell tool uses these same templates/tokens
+# Consistency: the shipped tool normalizes via TOM and uses the templates
 # ---------------------------------------------------------------------------
 
 def check_tool_consistency() -> None:
-    ps1 = (REPO / "powershell" / "bim-to-pbip.ps1").read_text(encoding="utf-8")
-    for token in ("pbip-templates", "{{REPORT_FOLDER}}",
-                  "{{SEMANTIC_MODEL_FOLDER}}", "{{PAGE_NAME}}",
-                  ".SemanticModel", ".Report", "Test-PbipStructure"):
-        check(token in ps1, f"bim-to-pbip.ps1 references '{token}'")
-    for marker in ("pbi-tools.exe", "Resolve-PbiTools", "Install-PbiToolsAuto",
-                   "PbiToolsExe"):
-        check(marker not in ps1,
-              f"bim-to-pbip.ps1 no longer depends on pbi-tools ('{marker}' absent)")
+    check(not (REPO / "powershell").exists(),
+          "the retired PowerShell implementation is gone")
 
     proj = (TEMPLATES / "project.pbip").read_text(encoding="utf-8")
     check('"report"' in proj and '"dataset"' not in proj,
           "template project.pbip uses a 'report' artifact, not 'dataset'")
 
-    # The C# tool consumes the same templates and shares the structure.
-    cs_dir = REPO / "BimToPbipCli"
-    csproj = (cs_dir / "BimToPbipCli.csproj").read_text(encoding="utf-8")
+    csproj = (CLI_PROJECT / "BimToPbipCli.csproj").read_text(encoding="utf-8")
     check("pbip-templates" in csproj,
           "BimToPbipCli.csproj embeds the pbip-templates")
-    conv = (cs_dir / "ConversionService.cs").read_text(encoding="utf-8")
+    check("Microsoft.AnalysisServices" in csproj,
+          "BimToPbipCli.csproj references the TOM package")
+
+    conv = (CLI_PROJECT / "ConversionService.cs").read_text(encoding="utf-8")
+    check("DeserializeDatabase" in conv,
+          "ConversionService.cs deserializes the .bim through TOM")
+    check("TmdlSerializer" in conv and "SerializeDatabaseToFolder" in conv,
+          "ConversionService.cs emits the model as TMDL")
     for marker in ("PbiToolsLocator", "runConvert", "ProcessRunner"):
         check(marker not in conv,
               f"ConversionService.cs no longer depends on pbi-tools ('{marker}' absent)")
-    check("validatePbipProject" in conv,
-          "ConversionService.cs validates the assembled project")
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +362,7 @@ def main() -> int:
     print("-" * 60)
 
     check(TEMPLATES.is_dir(), "pbip-templates/ folder is present")
+    check(CLI_PROJECT.is_dir(), "BimToPbipCli/ project is present")
     check_tool_consistency()
 
     name = "Adventure Works Complex"  # includes a space on purpose
@@ -391,15 +374,10 @@ def main() -> int:
         check(bim_path.stat().st_size > 2000, "complex .bim was generated")
 
         out_root = tmp_path / "out" / name
-        convert(bim_path, out_root, name)
-        ok("conversion completed without error")
+        run_converter(bim_path, out_root, name)
+        ok("converter completed without error")
 
         validate(out_root, name)
-
-        # The input .bim must survive the round-trip byte-for-byte.
-        check((out_root / f"{name}.SemanticModel" / "model.bim").read_text("utf-8")
-              == bim_path.read_text("utf-8"),
-              "model.bim is byte-identical to the input .bim")
 
     print("-" * 60)
     print(f"ALL {len(PASSED)} CHECKS PASSED")

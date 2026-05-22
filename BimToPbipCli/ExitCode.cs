@@ -13,7 +13,10 @@ public enum ExitCode
     /// <summary>The input model.bim file does not exist.</summary>
     BimNotFound = 2,
 
-    /// <summary>The input model.bim is not a valid TMSL JSON model.</summary>
+    /// <summary>
+    /// The input model.bim is not a valid Tabular model: TOM could not
+    /// deserialize it, or the normalized model could not be serialized to TMDL.
+    /// </summary>
     BimInvalid = 3,
 
     /// <summary>The assembled PBIP project failed its structural validation.</summary>
